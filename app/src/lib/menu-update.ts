@@ -111,6 +111,7 @@ const allMenuIds: ReadonlyArray<MenuIDs> = [
   'pull',
   'branch',
   'repository',
+  'go-to-commit-message',
   'create-branch',
   'show-changes',
   'show-history',
@@ -153,8 +154,6 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
   let tipStateIsUnknown = false
   let branchIsUnborn = false
 
-  let hasRemote = false
-
   if (selectedState && selectedState.type === SelectionType.Repository) {
     repositorySelected = true
 
@@ -184,8 +183,6 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
       onNonDefaultBranch = true
     }
 
-    hasRemote = !!selectedState.state.remote
-
     networkActionInProgress = selectedState.state.isPushPullFetchInProgress
   }
 
@@ -199,6 +196,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
     'open-in-shell',
     'open-working-directory',
     'show-repository-settings',
+    'go-to-commit-message',
     'show-changes',
     'show-history',
     'show-branches-list',
@@ -242,7 +240,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
     )
     menuStateBuilder.setEnabled(
       'push',
-      hasRemote && !branchIsUnborn && !networkActionInProgress
+      !branchIsUnborn && !networkActionInProgress
     )
     menuStateBuilder.setEnabled(
       'pull',
@@ -288,6 +286,7 @@ function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
     menuStateBuilder.disable('push')
     menuStateBuilder.disable('pull')
     menuStateBuilder.disable('compare-to-branch')
+    menuStateBuilder.disable('compare-on-github')
   }
   return menuStateBuilder
 }
@@ -299,7 +298,8 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
 
   return getAllMenusEnabledBuilder()
     .merge(getRepositoryMenuBuilder(state))
-    .merge(getInWelcomeFlowBuilder(state.showWelcomeFlow)).state
+    .merge(getInWelcomeFlowBuilder(state.showWelcomeFlow))
+    .merge(getNoRepositoriesBuilder(state)).state
 }
 
 function getAllMenusEnabledBuilder(): MenuStateBuilder {
@@ -327,6 +327,21 @@ function getInWelcomeFlowBuilder(inWelcomeFlow: boolean): MenuStateBuilder {
   } else {
     for (const id of welcomeScopedIds) {
       menuStateBuilder.enable(id)
+    }
+  }
+
+  return menuStateBuilder
+}
+
+function getNoRepositoriesBuilder(state: IAppState): MenuStateBuilder {
+  const noRepositoriesDisabledIds: ReadonlyArray<MenuIDs> = [
+    'show-repository-list',
+  ]
+
+  const menuStateBuilder = new MenuStateBuilder()
+  if (state.repositories.length === 0) {
+    for (const id of noRepositoriesDisabledIds) {
+      menuStateBuilder.disable(id)
     }
   }
 

@@ -6,7 +6,10 @@ import {
   AppFileStatus,
   FileEntry,
   GitStatusEntry,
-  ConflictStatus,
+  AppFileStatusKind,
+  UnmergedEntry,
+  ConflictedFileStatus,
+  UnmergedEntrySummary,
 } from '../../models/status'
 import {
   parsePorcelainStatus,
@@ -21,6 +24,7 @@ import { Repository } from '../../models/repository'
 import { IAheadBehind } from '../../models/branch'
 import { fatalError } from '../../lib/fatal-error'
 import { enableStatusWithoutOptionalLocks } from '../feature-flag'
+import { isMergeHeadSet } from './merge'
 
 /**
  * V8 has a limit on the size of string it can create (~256MB), and unless we want to
@@ -49,6 +53,9 @@ export interface IStatusResult {
   /** true if the repository exists at the given location */
   readonly exists: boolean
 
+  /** true if repository is in a conflicted state */
+  readonly mergeHeadFound: boolean
+
   /** the absolute path to the repository's working directory */
   readonly workingDirectory: WorkingDirectoryStatus
 }
@@ -61,29 +68,59 @@ interface IStatusHeadersData {
   match: RegExpMatchArray | null
 }
 
+type ConflictCountsByPath = ReadonlyMap<string, number>
+
+function parseConflictedState(
+  entry: UnmergedEntry,
+  path: string,
+  filesWithConflictMarkers: ConflictCountsByPath
+): ConflictedFileStatus {
+  switch (entry.action) {
+    case UnmergedEntrySummary.BothAdded:
+      const addedConflictsLeft = filesWithConflictMarkers.get(path) || 0
+      return {
+        kind: AppFileStatusKind.Conflicted,
+        entry,
+        conflictMarkerCount: addedConflictsLeft,
+      }
+    case UnmergedEntrySummary.BothModified:
+      const modifedConflictsLeft = filesWithConflictMarkers.get(path) || 0
+      return {
+        kind: AppFileStatusKind.Conflicted,
+        entry,
+        conflictMarkerCount: modifedConflictsLeft,
+      }
+    default:
+      return {
+        kind: AppFileStatusKind.Conflicted,
+        entry,
+      }
+  }
+}
+
 function convertToAppStatus(
-  status: FileEntry,
-  hasConflictMarkers: boolean
+  path: string,
+  entry: FileEntry,
+  filesWithConflictMarkers: ConflictCountsByPath,
+  oldPath?: string
 ): AppFileStatus {
-  if (status.kind === 'ordinary') {
-    switch (status.type) {
+  if (entry.kind === 'ordinary') {
+    switch (entry.type) {
       case 'added':
-        return AppFileStatus.New
+        return { kind: AppFileStatusKind.New }
       case 'modified':
-        return AppFileStatus.Modified
+        return { kind: AppFileStatusKind.Modified }
       case 'deleted':
-        return AppFileStatus.Deleted
+        return { kind: AppFileStatusKind.Deleted }
     }
-  } else if (status.kind === 'copied') {
-    return AppFileStatus.Copied
-  } else if (status.kind === 'renamed') {
-    return AppFileStatus.Renamed
-  } else if (status.kind === 'conflicted') {
-    return hasConflictMarkers
-      ? AppFileStatus.Conflicted
-      : AppFileStatus.Resolved
-  } else if (status.kind === 'untracked') {
-    return AppFileStatus.New
+  } else if (entry.kind === 'copied' && oldPath != null) {
+    return { kind: AppFileStatusKind.Copied, oldPath }
+  } else if (entry.kind === 'renamed' && oldPath != null) {
+    return { kind: AppFileStatusKind.Renamed, oldPath }
+  } else if (entry.kind === 'untracked') {
+    return { kind: AppFileStatusKind.Untracked }
+  } else if (entry.kind === 'conflicted') {
+    return parseConflictedState(entry, path, filesWithConflictMarkers)
   }
 
   return fatalError(`Unknown file status ${status}`)
@@ -138,16 +175,16 @@ export async function getStatus(
   const headers = parsed.filter(isStatusHeader)
   const entries = parsed.filter(isStatusEntry)
 
-  // run git diff check if anything is conflicted
-  const filesWithConflictMarkers = entries.some(
-    es => mapStatus(es.statusCode).kind === 'conflicted'
-  )
+  const mergeHeadFound = await isMergeHeadSet(repository)
+
+  // if we have any conflicted files reported by status, let
+  const conflictState = mergeHeadFound
     ? await getFilesWithConflictMarkers(repository.path)
     : new Map<string, number>()
 
   // Map of files keyed on their paths.
   const files = entries.reduce(
-    (files, entry) => buildStatusMap(files, entry, filesWithConflictMarkers),
+    (files, entry) => buildStatusMap(files, entry, conflictState),
     new Map<string, WorkingDirectoryFileChange>()
   )
 
@@ -172,6 +209,7 @@ export async function getStatus(
     currentUpstreamBranch,
     branchAheadBehind,
     exists: true,
+    mergeHeadFound,
     workingDirectory,
   }
 }
@@ -186,7 +224,7 @@ export async function getStatus(
 function buildStatusMap(
   files: Map<string, WorkingDirectoryFileChange>,
   entry: IStatusEntry,
-  filesWithConflictMarkers: Map<string, number>
+  filesWithConflictMarkers: ConflictCountsByPath
 ): Map<string, WorkingDirectoryFileChange> {
   const status = mapStatus(entry.statusCode)
 
@@ -210,34 +248,19 @@ function buildStatusMap(
     files.delete(entry.path)
   }
 
-  // TODO: we need to differentiate here between conflicted text files (that
-  //       we can inspect and check if they have been resolved) and binary files
-  //       (that we cannot inspect, and we need to do our own inspection and
-  //       defer to the index state)
-
   // for now we just poke at the existing summary
-  const summary = convertToAppStatus(
+  const appStatus = convertToAppStatus(
+    entry.path,
     status,
-    filesWithConflictMarkers.has(entry.path)
+    filesWithConflictMarkers,
+    entry.oldPath
   )
+
   const selection = DiffSelection.fromInitialSelection(DiffSelectionType.All)
-
-  // TODO: detect that a binary file is conflicted and generate a different
-  //       `conflictStatus` value
-  const conflictMarkerCount = filesWithConflictMarkers.get(entry.path)
-
-  const conflictStatus: ConflictStatus | null =
-    conflictMarkerCount == null ? null : { kind: 'text', conflictMarkerCount }
 
   files.set(
     entry.path,
-    new WorkingDirectoryFileChange(
-      entry.path,
-      summary,
-      selection,
-      entry.oldPath,
-      conflictStatus
-    )
+    new WorkingDirectoryFileChange(entry.path, appStatus, selection)
   )
   return files
 }
