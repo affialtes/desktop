@@ -3,7 +3,7 @@ import * as React from 'react'
 
 import { ChangesList } from './changes-list'
 import { DiffSelectionType } from '../../models/diff'
-import { IChangesState, PopupType } from '../../lib/app-state'
+import { IChangesState } from '../../lib/app-state'
 import { Repository } from '../../models/repository'
 import { Dispatcher } from '../../lib/dispatcher'
 import { IGitHubUser } from '../../lib/databases'
@@ -23,6 +23,7 @@ import { CSSTransitionGroup } from 'react-transition-group'
 import { openFile } from '../../lib/open-file'
 import { ITrailer } from '../../lib/git/interpret-trailers'
 import { Account } from '../../models/account'
+import { PopupType } from '../../models/popup'
 
 /**
  * The timeout for the animation of the enter/leave animation for Undo.
@@ -77,11 +78,12 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
   private receiveProps(props: IChangesSidebarProps) {
     if (
       this.autocompletionProviders === null ||
+      this.props.emoji.size === 0 ||
       props.repository.hash !== this.props.repository.hash ||
       props.accounts !== this.props.accounts
     ) {
       const autocompletionProviders: IAutocompletionProvider<any>[] = [
-        new EmojiAutocompletionProvider(this.props.emoji),
+        new EmojiAutocompletionProvider(props.emoji),
       ]
 
       // Issues autocompletion is only available for GitHub repositories.
@@ -168,12 +170,14 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
   }
 
   private onDiscardAllChanges = (
-    files: ReadonlyArray<WorkingDirectoryFileChange>
+    files: ReadonlyArray<WorkingDirectoryFileChange>,
+    isDiscardingAllChanges: boolean = true
   ) => {
     this.props.dispatcher.showPopup({
       type: PopupType.ConfirmDiscardChanges,
       repository: this.props.repository,
       showDiscardChangesSetting: false,
+      discardingAllChanges: isDiscardingAllChanges,
       files,
     })
   }
@@ -305,7 +309,6 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
           branch={this.props.branch}
           gitHubUser={user}
           commitMessage={this.props.changes.commitMessage}
-          contextualCommitMessage={this.props.changes.contextualCommitMessage}
           autocompletionProviders={this.autocompletionProviders!}
           availableWidth={this.props.availableWidth}
           onIgnore={this.onIgnore}
