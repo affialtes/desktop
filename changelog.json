@@ -1,5 +1,6 @@
 {
   "releases": {
+<<<<<<< HEAD
     "1.7.0-beta6": [
       "[Fixed] Stash viewer does not disable restore button when changes present - #7409",
       "[Fixed] Stash viewer does not center \"no content\" text - #7299",
@@ -302,6 +303,10 @@
       "[Fixed] \"Compare on GitHub\" menu item enabled when no repository is selected - #6078",
       "[Fixed] Diff viewer blocks keyboard navigation using reverse tab order - #2794",
       "[Improved] \"Publish Repository\" dialog handles emoji characters - #5980. Thanks @WaleedAshraf!"
+=======
+<<<<<<< HEAD
+    "1.5.0-beta3": [
+>>>>>>> big-numbers-are-hard-to-read
     ],
     "1.5.0-beta3": [],
     "1.5.0-beta2": [
@@ -396,6 +401,10 @@
       "[Improved] Clone dialog re-runs filesystem check when re-focusing on Desktop - #5518. Thanks @Daniel-McCarthy!",
       "[Improved] Branch names cannot start with a '+' character - #5594. Thanks @Daniel-McCarthy!",
       "[Improved] Warning if branch exists on remote when creating branch - #5141. Thanks @Daniel-McCarthy!"
+=======
+    "1.4.1-test3": [
+      "Design artifact"
+>>>>>>> origin/__release-test-b28c4b8-104408793
     ],
     "1.4.1-beta0": [],
     "1.4.0": [
