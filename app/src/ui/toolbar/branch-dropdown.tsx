@@ -5,8 +5,10 @@ import { Repository } from '../../models/repository'
 import { TipState } from '../../models/tip'
 import { ToolbarDropdown, DropdownState } from './dropdown'
 import { IRepositoryState } from '../../lib/app-state'
-import { Branches } from '../branches'
+import { BranchesContainer, PullRequestBadge } from '../branches'
 import { assertNever } from '../../lib/fatal-error'
+import { BranchesTab } from '../../models/branches-tab'
+import { PullRequest } from '../../models/pull-request'
 
 interface IBranchDropdownProps {
   readonly dispatcher: Dispatcher
@@ -27,12 +29,24 @@ interface IBranchDropdownProps {
    * @param state    - The new state of the drop down
    */
   readonly onDropDownStateChanged: (state: DropdownState) => void
+
+  /** The currently selected tab. */
+  readonly selectedTab: BranchesTab
+
+  /** The open pull requests in the repository. */
+  readonly pullRequests: ReadonlyArray<PullRequest>
+
+  /** The pull request associated with the current branch. */
+  readonly currentPullRequest: PullRequest | null
+
+  /** Are we currently loading pull requests? */
+  readonly isLoadingPullRequests: boolean
 }
 
 /**
  * A drop down for selecting the currently checked out branch.
  */
-export class BranchDropdown extends React.Component<IBranchDropdownProps, {}> {
+export class BranchDropdown extends React.Component<IBranchDropdownProps> {
   private renderBranchFoldout = (): JSX.Element | null => {
     const repositoryState = this.props.repositoryState
     const branchesState = repositoryState.branchesState
@@ -41,13 +55,17 @@ export class BranchDropdown extends React.Component<IBranchDropdownProps, {}> {
     const currentBranch = tip.kind === TipState.Valid ? tip.branch : null
 
     return (
-      <Branches
+      <BranchesContainer
         allBranches={branchesState.allBranches}
         recentBranches={branchesState.recentBranches}
         currentBranch={currentBranch}
         defaultBranch={branchesState.defaultBranch}
         dispatcher={this.props.dispatcher}
         repository={this.props.repository}
+        selectedTab={this.props.selectedTab}
+        pullRequests={this.props.pullRequests}
+        currentPullRequest={this.props.currentPullRequest}
+        isLoadingPullRequests={this.props.isLoadingPullRequests}
       />
     )
   }
@@ -75,13 +93,17 @@ export class BranchDropdown extends React.Component<IBranchDropdownProps, {}> {
     let canOpen = true
     let tooltip: string
 
+    if (this.props.currentPullRequest) {
+      icon = OcticonSymbol.gitPullRequest
+    }
+
     if (tip.kind === TipState.Unknown) {
       // TODO: this is bad and I feel bad
       return null
     } else if (tip.kind === TipState.Unborn) {
       title = tip.ref
       tooltip = `Current branch is ${tip.ref}`
-      canOpen = false
+      canOpen = branchesState.allBranches.length > 0
     } else if (tip.kind === TipState.Detached) {
       title = `On ${tip.currentSha.substr(0, 7)}`
       tooltip = 'Currently on a detached HEAD'
@@ -128,7 +150,18 @@ export class BranchDropdown extends React.Component<IBranchDropdownProps, {}> {
         dropdownState={currentState}
         showDisclosureArrow={canOpen}
         progressValue={progressValue}
-      />
+      >
+        {this.renderPullRequestInfo()}
+      </ToolbarDropdown>
     )
+  }
+
+  private renderPullRequestInfo() {
+    const pr = this.props.currentPullRequest
+    if (!pr) {
+      return null
+    }
+
+    return <PullRequestBadge number={pr.pullRequestNumber} status={pr.status} />
   }
 }

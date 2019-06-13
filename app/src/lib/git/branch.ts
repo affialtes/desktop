@@ -1,7 +1,10 @@
 import { git, gitNetworkArguments } from './core'
+import { getBranches } from './for-each-ref'
 import { Repository } from '../../models/repository'
 import { Branch, BranchType } from '../../models/branch'
-import { IGitAccount, envForAuthentication } from './authentication'
+import { IGitAccount } from '../../models/git-account'
+import { envForAuthentication } from './authentication'
+import { getCaptures } from '../helpers/regex'
 
 /**
  * Create a new branch from the given start point.
@@ -16,11 +19,19 @@ export async function createBranch(
   repository: Repository,
   name: string,
   startPoint?: string
-): Promise<true> {
+): Promise<Branch | null> {
   const args = startPoint ? ['branch', name, startPoint] : ['branch', name]
 
-  await git(args, repository.path, 'createBranch')
-  return true
+  try {
+    await git(args, repository.path, 'createBranch')
+    const branches = await getBranches(repository, `refs/heads/${name}`)
+    if (branches.length > 0) {
+      return branches[0]
+    }
+  } catch (err) {
+    log.error('createBranch failed', err)
+  }
+  return null
 }
 
 /** Rename the given branch to a new name. */
@@ -106,4 +117,22 @@ async function checkIfBranchExistsOnRemote(
     opts
   )
   return result.stdout.length > 0
+}
+
+export async function getBranchesPointedAt(
+  repository: Repository,
+  commitish: string
+): Promise<Array<string>> {
+  const args = [
+    'branch',
+    `--points-at=${commitish}`,
+    '--format=%(refname:short)',
+  ]
+  const { stdout } = await git(args, repository.path, 'branchPointedAt')
+  // split along newlines, which should just be branch names
+  const captures = getCaptures(stdout, /\s*(.+)\n/g)
+  if (captures.length === 0) {
+    return []
+  }
+  return captures.reduce((acc, val) => acc.concat(val))
 }

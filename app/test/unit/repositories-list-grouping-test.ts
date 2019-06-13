@@ -1,12 +1,11 @@
-import * as chai from 'chai'
-const expect = chai.expect
+import { expect } from 'chai'
 
 import { groupRepositories } from '../../src/ui/repositories-list/group-repositories'
-import { Repository } from '../../src/models/repository'
+import { Repository, ILocalRepositoryState } from '../../src/models/repository'
 import { GitHubRepository } from '../../src/models/github-repository'
 import { Owner } from '../../src/models/owner'
 import { getDotComAPIEndpoint } from '../../src/lib/api'
-import { CloningRepository } from '../../src/lib/dispatcher'
+import { CloningRepository } from '../../src/models/cloning-repository'
 
 describe('repository list grouping', () => {
   const repositories: Array<Repository | CloningRepository> = [
@@ -16,7 +15,7 @@ describe('repository list grouping', () => {
       2,
       new GitHubRepository(
         'my-repo2',
-        new Owner('', getDotComAPIEndpoint()),
+        new Owner('', getDotComAPIEndpoint(), null),
         1
       ),
       false
@@ -24,13 +23,15 @@ describe('repository list grouping', () => {
     new Repository(
       'repo3',
       3,
-      new GitHubRepository('my-repo3', new Owner('', ''), 1),
+      new GitHubRepository('my-repo3', new Owner('', '', null), 1),
       false
     ),
   ]
 
+  const cache = new Map<number, ILocalRepositoryState>()
+
   it('groups repositories by GitHub/Enterprise/Other', () => {
-    const grouped = groupRepositories(repositories)
+    const grouped = groupRepositories(repositories, cache)
     expect(grouped.length).to.equal(3)
 
     expect(grouped[0].identifier).to.equal('github')
@@ -57,19 +58,22 @@ describe('repository list grouping', () => {
     const repoB = new Repository(
       'b',
       2,
-      new GitHubRepository('b', new Owner('', getDotComAPIEndpoint()), 1),
+      new GitHubRepository('b', new Owner('', getDotComAPIEndpoint(), null), 1),
       false
     )
     const repoC = new Repository('c', 2, null, false)
     const repoD = new Repository(
       'd',
       2,
-      new GitHubRepository('d', new Owner('', getDotComAPIEndpoint()), 1),
+      new GitHubRepository('d', new Owner('', getDotComAPIEndpoint(), null), 1),
       false
     )
     const repoZ = new Repository('z', 3, null, false)
 
-    const grouped = groupRepositories([repoC, repoB, repoZ, repoD, repoA])
+    const grouped = groupRepositories(
+      [repoC, repoB, repoZ, repoD, repoA],
+      cache
+    )
     expect(grouped.length).to.equal(2)
 
     expect(grouped[0].identifier).to.equal('github')
@@ -94,7 +98,7 @@ describe('repository list grouping', () => {
       1,
       new GitHubRepository(
         'repo',
-        new Owner('user1', getDotComAPIEndpoint()),
+        new Owner('user1', getDotComAPIEndpoint(), null),
         1
       ),
       false
@@ -104,7 +108,7 @@ describe('repository list grouping', () => {
       2,
       new GitHubRepository(
         'cool-repo',
-        new Owner('user2', getDotComAPIEndpoint()),
+        new Owner('user2', getDotComAPIEndpoint(), null),
         2
       ),
       false
@@ -114,26 +118,26 @@ describe('repository list grouping', () => {
       2,
       new GitHubRepository(
         'repo',
-        new Owner('user2', getDotComAPIEndpoint()),
+        new Owner('user2', getDotComAPIEndpoint(), null),
         2
       ),
       false
     )
 
-    const grouped = groupRepositories([repoA, repoB, repoC])
+    const grouped = groupRepositories([repoA, repoB, repoC], cache)
     expect(grouped.length).to.equal(1)
 
     expect(grouped[0].identifier).to.equal('github')
     expect(grouped[0].items.length).to.equal(3)
 
     const items = grouped[0].items
-    expect(items[0].text).to.equal('cool-repo')
+    expect(items[0].text[0]).to.equal('cool-repo')
     expect(items[0].needsDisambiguation).to.equal(false)
 
-    expect(items[1].text).to.equal('repo')
+    expect(items[1].text[0]).to.equal('repo')
     expect(items[1].needsDisambiguation).to.equal(true)
 
-    expect(items[2].text).to.equal('repo')
+    expect(items[2].text[0]).to.equal('repo')
     expect(items[2].needsDisambiguation).to.equal(true)
   })
 })

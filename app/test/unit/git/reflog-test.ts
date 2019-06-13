@@ -1,5 +1,3 @@
-/* tslint:disable:no-sync-functions */
-
 import { expect } from 'chai'
 
 import { Repository } from '../../../src/models/repository'
@@ -9,7 +7,7 @@ import {
   checkoutBranch,
   renameBranch,
 } from '../../../src/lib/git'
-import { setupFixtureRepository } from '../../fixture-helper'
+import { setupFixtureRepository } from '../../helpers/repositories'
 import { Branch, BranchType } from '../../../src/models/branch'
 import { Commit } from '../../../src/models/commit'
 import { CommitIdentity } from '../../../src/models/commit-identity'
@@ -18,15 +16,18 @@ async function createAndCheckout(
   repository: Repository,
   name: string
 ): Promise<void> {
-  await createBranch(repository, name)
-  await checkoutBranch(repository, name)
+  const branch = await createBranch(repository, name)
+  if (branch == null) {
+    throw new Error(`Unable to create branch: ${name}`)
+  }
+  await checkoutBranch(repository, null, branch)
 }
 
 describe('git/reflog', () => {
   let repository: Repository | null = null
 
-  beforeEach(() => {
-    const testRepoPath = setupFixtureRepository('test-repo')
+  beforeEach(async () => {
+    const testRepoPath = await setupFixtureRepository('test-repo')
     repository = new Repository(testRepoPath, -1, null, false)
   })
 
@@ -49,7 +50,15 @@ describe('git/reflog', () => {
         new Branch(
           'branch-1',
           null,
-          new Commit('', '', '', new CommitIdentity('', '', new Date()), []),
+          new Commit(
+            '',
+            '',
+            '',
+            new CommitIdentity('', '', new Date()),
+            new CommitIdentity('', '', new Date()),
+            [],
+            []
+          ),
           BranchType.Local
         ),
         'branch-1-test'

@@ -1,5 +1,4 @@
-import * as chai from 'chai'
-const expect = chai.expect
+import { expect } from 'chai'
 
 import {
   Tokenizer,
@@ -53,6 +52,7 @@ describe('Tokenizer', () => {
         endpoint,
         login,
         hash: '',
+        id: null,
       },
       cloneURL,
       endpoint: 'https://api.github.com',
@@ -61,10 +61,8 @@ describe('Tokenizer', () => {
       fork: false,
       htmlURL: htmlURL,
       defaultBranch: 'master',
-      withAPI: apiRepository => {
-        return gitHubRepository!
-      },
       hash: '',
+      parent: null,
     }
 
     const repository = new Repository(
@@ -189,6 +187,133 @@ describe('Tokenizer', () => {
       expect(results[2].text).to.equal(
         ' from desktop/computering-icons-for-all'
       )
+    })
+
+    it('renders link when squash and merge', () => {
+      const id = 5203
+      const expectedUri = `${htmlURL}/issues/${id}`
+      const text = `Update README.md (#5203)`
+
+      const tokenizer = new Tokenizer(emoji, repository)
+      const results = tokenizer.tokenize(text)
+      expect(results.length).to.equal(3)
+
+      expect(results[0].kind).to.equal(TokenType.Text)
+      expect(results[0].text).to.equal('Update README.md (')
+
+      expect(results[1].kind).to.equal(TokenType.Link)
+      const mention = results[1] as HyperlinkMatch
+
+      expect(mention.text).to.equal('#5203')
+      expect(mention.url).to.equal(expectedUri)
+
+      expect(results[2].kind).to.equal(TokenType.Text)
+      expect(results[2].text).to.equal(')')
+    })
+
+    it('renders link and author mention when parsing release notes', () => {
+      const id = 5348
+      const expectedUri = `${htmlURL}/issues/${id}`
+      const text = `'Clone repository' menu item label is obscured on Windows - #5348. Thanks @Daniel-McCarthy!`
+
+      const tokenizer = new Tokenizer(emoji, repository)
+      const results = tokenizer.tokenize(text)
+      expect(results.length).to.equal(5)
+
+      expect(results[0].kind).to.equal(TokenType.Text)
+      expect(results[0].text).to.equal(
+        `'Clone repository' menu item label is obscured on Windows - `
+      )
+
+      expect(results[1].kind).to.equal(TokenType.Link)
+      const issueLink = results[1] as HyperlinkMatch
+
+      expect(issueLink.text).to.equal('#5348')
+      expect(issueLink.url).to.equal(expectedUri)
+
+      expect(results[2].kind).to.equal(TokenType.Text)
+      expect(results[2].text).to.equal('. Thanks ')
+
+      expect(results[3].kind).to.equal(TokenType.Link)
+      const userLink = results[3] as HyperlinkMatch
+
+      expect(userLink.text).to.equal('@Daniel-McCarthy')
+      expect(userLink.url).to.equal('https://github.com/Daniel-McCarthy')
+
+      expect(results[4].kind).to.equal(TokenType.Text)
+      expect(results[4].text).to.equal(`!`)
+    })
+
+    it('renders multiple issue links and mentions', () => {
+      const firstId = 3174
+      const firstExpectedUrl = `${htmlURL}/issues/${firstId}`
+      const secondId = 3184
+      const secondExpectedUrl = `${htmlURL}/issues/${secondId}`
+      const thirdId = 3207
+      const thirdExpectedUrl = `${htmlURL}/issues/${thirdId}`
+      const text =
+        'Assorted changelog typos - #3174 #3184 #3207. Thanks @strafe, @alanaasmaa and @jt2k!'
+
+      const tokenizer = new Tokenizer(emoji, repository)
+      const results = tokenizer.tokenize(text)
+      expect(results.length).to.equal(13)
+
+      expect(results[0].kind).to.equal(TokenType.Text)
+      expect(results[0].text).to.equal('Assorted changelog typos - ')
+
+      expect(results[1].kind).to.equal(TokenType.Link)
+      const firstIssueLink = results[1] as HyperlinkMatch
+
+      expect(firstIssueLink.text).to.equal('#3174')
+      expect(firstIssueLink.url).to.equal(firstExpectedUrl)
+
+      expect(results[2].kind).to.equal(TokenType.Text)
+      expect(results[2].text).to.equal(' ')
+
+      expect(results[3].kind).to.equal(TokenType.Link)
+      const secondIssueLink = results[3] as HyperlinkMatch
+
+      expect(secondIssueLink.text).to.equal('#3184')
+      expect(secondIssueLink.url).to.equal(secondExpectedUrl)
+
+      expect(results[4].kind).to.equal(TokenType.Text)
+      expect(results[4].text).to.equal(' ')
+
+      expect(results[5].kind).to.equal(TokenType.Link)
+      const thirdIssueLink = results[5] as HyperlinkMatch
+
+      expect(thirdIssueLink.text).to.equal('#3207')
+      expect(thirdIssueLink.url).to.equal(thirdExpectedUrl)
+
+      expect(results[6].kind).to.equal(TokenType.Text)
+      expect(results[6].text).to.equal('. Thanks ')
+
+      expect(results[7].kind).to.equal(TokenType.Link)
+      const firstUserLink = results[7] as HyperlinkMatch
+
+      expect(firstUserLink.text).to.equal('@strafe')
+      expect(firstUserLink.url).to.equal('https://github.com/strafe')
+
+      expect(results[8].kind).to.equal(TokenType.Text)
+      expect(results[8].text).to.equal(', ')
+
+      expect(results[9].kind).to.equal(TokenType.Link)
+      const secondUserLink = results[9] as HyperlinkMatch
+
+      expect(secondUserLink.text).to.equal('@alanaasmaa')
+      expect(secondUserLink.url).to.equal('https://github.com/alanaasmaa')
+
+      expect(results[10].kind).to.equal(TokenType.Text)
+      expect(results[10].text).to.equal(' and ')
+
+      expect(results[11].kind).to.equal(TokenType.Link)
+      const thirdUserLink = results[11] as HyperlinkMatch
+
+      expect(thirdUserLink.text).to.equal('@jt2k')
+      expect(thirdUserLink.url).to.equal('https://github.com/jt2k')
+
+      expect(results[12].kind).to.equal(TokenType.Text)
+      expect(results[12].text).to.equal(`!`)
     })
 
     it('converts full URL to issue shorthand', () => {

@@ -1,5 +1,4 @@
-import * as chai from 'chai'
-const expect = chai.expect
+import { expect } from 'chai'
 
 import {
   groupRepositories,
@@ -39,30 +38,39 @@ describe('clone repository grouping', () => {
     const repositories: Array<IAPIRepository> = [
       {
         clone_url: '',
+        ssh_url: '',
         html_url: '',
         name: 'some-repo',
         owner: users.shiftkey,
         private: true,
         fork: true,
         default_branch: '',
+        parent: null,
+        pushed_at: '1995-12-17T03:24:00',
       },
       {
         clone_url: '',
+        ssh_url: '',
         html_url: '',
         name: 'octokit.net',
         owner: users.octokit,
         private: false,
         fork: false,
         default_branch: '',
+        parent: null,
+        pushed_at: '1995-12-17T03:24:00',
       },
       {
         clone_url: '',
+        ssh_url: '',
         html_url: '',
         name: 'desktop',
         owner: users.desktop,
         private: true,
         fork: false,
         default_branch: '',
+        parent: null,
+        pushed_at: '1995-12-17T03:24:00',
       },
     ]
 

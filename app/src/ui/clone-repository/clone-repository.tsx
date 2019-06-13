@@ -1,6 +1,8 @@
 import * as Path from 'path'
 import * as React from 'react'
 import { remote } from 'electron'
+import { pathExists } from 'fs-extra'
+
 import { Button } from '../lib/button'
 import { ButtonGroup } from '../lib/button-group'
 import { Dispatcher } from '../../lib/dispatcher'
@@ -9,6 +11,7 @@ import { Account } from '../../models/account'
 import {
   IRepositoryIdentifier,
   parseRepositoryIdentifier,
+  parseRemote,
 } from '../../lib/remote-parsing'
 import { findAccountForRemoteURL } from '../../lib/find-account'
 import { API } from '../../lib/api'
@@ -17,7 +20,7 @@ import { TabBar } from '../tab-bar'
 import { CloneRepositoryTab } from '../../models/clone-repository-tab'
 import { CloneGenericRepository } from './clone-generic-repository'
 import { CloneGithubRepository } from './clone-github-repository'
-import { pathExists } from '../../lib/file-system'
+
 import { assertNever } from '../../lib/fatal-error'
 import { CallToAction } from '../lib/call-to-action'
 
@@ -51,6 +54,17 @@ interface ICloneRepositoryState {
   /** The local path to clone to. */
   readonly path: string
 
+  /** A copy of the path state field which is set when the component initializes.
+   *
+   *  This value, as opposed to the path state variable, doesn't change for the
+   *  lifetime of the component. Used to keep track of whether the user has
+   *  modified the path state field which influences whether we show a
+   *  warning about the directory already existing or not.
+   *
+   *  See the onWindowFocus method for more information.
+   */
+  readonly initialPath: string
+
   /** Are we currently trying to load the entered repository? */
   readonly loading: boolean
 
@@ -61,6 +75,9 @@ interface ICloneRepositoryState {
    * The repository identifier that was last parsed from the user-entered URL.
    */
   readonly lastParsedIdentifier: IRepositoryIdentifier | null
+
+  /** Should the component clear the filter text on render? */
+  readonly shouldClearFilter: boolean
 }
 
 /** The component for cloning a repository. */
@@ -71,13 +88,22 @@ export class CloneRepository extends React.Component<
   public constructor(props: ICloneRepositoryProps) {
     super(props)
 
+    const defaultDirectory = getDefaultDir()
     this.state = {
       url: this.props.initialURL || '',
-      path: getDefaultDir(),
+      path: defaultDirectory,
+      initialPath: defaultDirectory,
       loading: false,
       error: null,
       lastParsedIdentifier: null,
+      shouldClearFilter: false,
     }
+  }
+
+  public componentWillReceiveProps(nextProps: ICloneRepositoryProps) {
+    this.setState({
+      shouldClearFilter: this.props.selectedTab !== nextProps.selectedTab,
+    })
   }
 
   public componentDidMount() {
@@ -85,6 +111,12 @@ export class CloneRepository extends React.Component<
     if (initialURL) {
       this.updateUrl(initialURL)
     }
+
+    window.addEventListener('focus', this.onWindowFocus)
+  }
+
+  public componentWillUnmount() {
+    window.removeEventListener('focus', this.onWindowFocus)
   }
 
   public render() {
@@ -156,7 +188,7 @@ export class CloneRepository extends React.Component<
           <CloneGenericRepository
             path={this.state.path}
             url={this.state.url}
-            onPathChanged={this.updatePath}
+            onPathChanged={this.updateAndValidatePath}
             onUrlChanged={this.updateUrl}
             onChooseDirectory={this.onChooseDirectory}
           />
@@ -172,10 +204,10 @@ export class CloneRepository extends React.Component<
             <CloneGithubRepository
               path={this.state.path}
               account={account}
-              onPathChanged={this.updatePath}
+              onPathChanged={this.updateAndValidatePath}
               onGitHubRepositorySelected={this.updateUrl}
               onChooseDirectory={this.onChooseDirectory}
-              onDismissed={this.props.onDismissed}
+              shouldClearFilter={this.state.shouldClearFilter}
             />
           )
         }
@@ -234,8 +266,19 @@ export class CloneRepository extends React.Component<
     this.props.dispatcher.showEnterpriseSignInDialog()
   }
 
-  private updatePath = (path: string) => {
+  private updateAndValidatePath = async (path: string) => {
     this.setState({ path })
+
+    const doesDirectoryExist = await this.doesPathExist(path)
+
+    if (doesDirectoryExist) {
+      const error: Error = new Error('The destination already exists.')
+      error.name = DestinationExistsErrorName
+
+      this.setState({ error })
+    } else {
+      this.setState({ error: null })
+    }
   }
 
   private onChooseDirectory = async () => {
@@ -252,18 +295,7 @@ export class CloneRepository extends React.Component<
       ? Path.join(directories[0], lastParsedIdentifier.name)
       : directories[0]
 
-    this.updatePath(directory)
-
-    const doesDirectoryExist = await this.doesPathExist(directory)
-
-    if (doesDirectoryExist) {
-      const error: Error = new Error('The destination already exists.')
-      error.name = DestinationExistsErrorName
-
-      this.setState({ error })
-    } else {
-      this.setState({ error: null })
-    }
+    this.updateAndValidatePath(directory)
 
     return directory
   }
@@ -286,21 +318,12 @@ export class CloneRepository extends React.Component<
       newPath = this.state.path
     }
 
-    const pathExist = await this.doesPathExist(newPath)
-
-    let error = null
-
-    if (pathExist) {
-      error = new Error('The destination already exists.')
-      error.name = DestinationExistsErrorName
-    }
-
     this.setState({
       url,
-      path: newPath,
       lastParsedIdentifier: parsed,
-      error,
     })
+
+    this.updateAndValidatePath(newPath)
   }
 
   private async doesPathExist(path: string) {
@@ -334,7 +357,14 @@ export class CloneRepository extends React.Component<
       const api = API.fromAccount(account)
       const repo = await api.fetchRepository(identifier.owner, identifier.name)
       if (repo) {
-        url = repo.clone_url
+        // respect the user's preference if they pasted an SSH URL into the
+        // Clone Generic Repository tab
+        const parsedUrl = parseRemote(url)
+        if (parsedUrl && parsedUrl.protocol === 'ssh') {
+          url = repo.ssh_url
+        } else {
+          url = repo.clone_url
+        }
       }
     }
 
@@ -349,14 +379,14 @@ export class CloneRepository extends React.Component<
 
     if (!url) {
       const error = new Error(
-        `We couldn't find that repository. Check that you are logged in, and the URL or repository alias are spelled correctly.`
+        `We couldn't find that repository. Check that you are logged in, the network is accessible, and the URL or repository alias are spelled correctly.`
       )
       this.setState({ loading: false, error })
       return
     }
 
     try {
-      this.cloneImpl(url, path)
+      this.cloneImpl(url.trim(), path)
     } catch (e) {
       log.error(`CloneRepostiory: clone failed to complete to ${path}`, e)
       this.setState({ loading: false, error: e })
@@ -368,5 +398,22 @@ export class CloneRepository extends React.Component<
     this.props.onDismissed()
 
     setDefaultDir(Path.resolve(path, '..'))
+  }
+
+  private onWindowFocus = () => {
+    // Verify the path after focus has been regained in case changes have been made.
+    const isDefaultPath = this.state.initialPath === this.state.path
+    const isURLNotEntered = this.state.url === ''
+
+    if (isDefaultPath && isURLNotEntered) {
+      if (
+        this.state.error !== null &&
+        this.state.error.name === DestinationExistsErrorName
+      ) {
+        this.setState({ error: null })
+      }
+    } else {
+      this.updateAndValidatePath(this.state.path)
+    }
   }
 }

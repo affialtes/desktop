@@ -1,10 +1,7 @@
-/* tslint:disable:no-sync-functions */
-
-import * as chai from 'chai'
-const expect = chai.expect
+import { expect } from 'chai'
 
 import * as Path from 'path'
-import * as FS from 'fs'
+import * as FSE from 'fs-extra'
 
 import { Repository } from '../../src/models/repository'
 import {
@@ -21,7 +18,7 @@ import {
 import { DiffParser } from '../../src/lib/diff-parser'
 import { formatPatch } from '../../src/lib/patch-formatter'
 import { getWorkingDirectoryDiff, convertDiff } from '../../src/lib/git'
-import { setupFixtureRepository } from '../fixture-helper'
+import { setupFixtureRepository } from '../helpers/repositories'
 
 async function parseDiff(diff: string): Promise<ITextDiff> {
   const parser = new DiffParser()
@@ -37,8 +34,8 @@ describe('patch formatting', () => {
   let repository: Repository | null = null
 
   describe('formatPatchesForModifiedFile', () => {
-    beforeEach(() => {
-      const testRepoPath = setupFixtureRepository('repo-with-changes')
+    beforeEach(async () => {
+      const testRepoPath = await setupFixtureRepository('repo-with-changes')
       repository = new Repository(testRepoPath, -1, null, false)
     })
 
@@ -162,7 +159,7 @@ describe('patch formatting', () => {
 
     it(`creates the right patch when an addition is selected but preceding deletions aren't`, async () => {
       const modifiedFile = 'modified-file.md'
-      FS.writeFileSync(Path.join(repository!.path, modifiedFile), 'line 1\n')
+      await FSE.writeFile(Path.join(repository!.path, modifiedFile), 'line 1\n')
 
       const unselectedFile = DiffSelection.fromInitialSelection(
         DiffSelectionType.None

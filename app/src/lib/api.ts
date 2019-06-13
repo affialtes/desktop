@@ -11,6 +11,8 @@ import {
 } from './http'
 import { AuthenticationMode } from './2fa'
 import { uuid } from './uuid'
+import { getAvatarWithEnterpriseFallback } from './gravatar'
+import { getDefaultEmail } from './email'
 
 const username: () => Promise<string> = require('username')
 
@@ -39,12 +41,15 @@ const NoteURL = 'https://desktop.github.com/'
  */
 export interface IAPIRepository {
   readonly clone_url: string
+  readonly ssh_url: string
   readonly html_url: string
   readonly name: string
   readonly owner: IAPIUser
   readonly private: boolean
   readonly fork: boolean
   readonly default_branch: string
+  readonly pushed_at: string
+  readonly parent: IAPIRepository | null
 }
 
 /**
@@ -63,7 +68,18 @@ export interface IAPIUser {
   readonly url: string
   readonly login: string
   readonly avatar_url: string
-  readonly name: string
+
+  /**
+   * The user's real name or null if the user hasn't provided
+   * a real name for their public profile.
+   */
+  readonly name: string | null
+
+  /**
+   * The email address for this user or null if the user has not
+   * specified a public email address in their profile.
+   */
+  readonly email: string | null
   readonly type: 'User' | 'Organization'
 }
 
@@ -107,6 +123,49 @@ export interface IAPIIssue {
   readonly updated_at: string
 }
 
+/** The combined state of a ref. */
+export type APIRefState = 'failure' | 'pending' | 'success'
+
+/**
+ * The API response for a combined view of a commit
+ * status for a given ref
+ */
+export interface IAPIRefStatusItem {
+  readonly state: APIRefState
+  readonly target_url: string
+  readonly description: string
+  readonly context: string
+  readonly id: number
+}
+
+/** The API response to a ref status request. */
+interface IAPIRefStatus {
+  readonly state: APIRefState
+  readonly total_count: number
+  readonly statuses: ReadonlyArray<IAPIRefStatusItem>
+}
+
+interface IAPIPullRequestRef {
+  readonly ref: string
+  readonly sha: string
+
+  /**
+   * The repository in which this ref lives. It could be null if the repository
+   * has been deleted since the PR was opened.
+   */
+  readonly repo: IAPIRepository | null
+}
+
+/** Information about a pull request as returned by the GitHub API. */
+export interface IAPIPullRequest {
+  readonly number: number
+  readonly title: string
+  readonly created_at: string
+  readonly user: IAPIUser
+  readonly head: IAPIPullRequestRef
+  readonly base: IAPIPullRequestRef
+}
+
 /** The metadata about a GitHub server. */
 export interface IServerMetadata {
   /**
@@ -130,7 +189,7 @@ interface IAPIAuthorization {
 
 /** The response we receive from fetching mentionables. */
 interface IAPIMentionablesResponse {
-  readonly etag: string
+  readonly etag: string | null
   readonly users: ReadonlyArray<IAPIMentionableUser>
 }
 
@@ -317,6 +376,13 @@ export class API {
       return await parsedResponse<IAPIRepository>(response)
     } catch (e) {
       if (e instanceof APIError) {
+        if (org !== null) {
+          throw new Error(
+            `Unable to create repository for organization '${
+              org.login
+            }'. Verify it exists and that you have permission to create a repository there.`
+          )
+        }
         throw e
       }
 
@@ -356,6 +422,42 @@ export class API {
     }
   }
 
+  /** Fetch the pull requests in the given repository. */
+  public async fetchPullRequests(
+    owner: string,
+    name: string,
+    state: 'open' | 'closed' | 'all'
+  ): Promise<ReadonlyArray<IAPIPullRequest>> {
+    const url = urlWithQueryString(`repos/${owner}/${name}/pulls`, { state })
+    try {
+      const prs = await this.fetchAll<IAPIPullRequest>(url)
+      return prs
+    } catch (e) {
+      log.warn(`fetchPullRequests: failed for repository ${owner}/${name}`, e)
+      throw e
+    }
+  }
+
+  /** Get the combined status for the given ref. */
+  public async fetchCombinedRefStatus(
+    owner: string,
+    name: string,
+    ref: string
+  ): Promise<IAPIRefStatus> {
+    const path = `repos/${owner}/${name}/commits/${ref}/status`
+    try {
+      const response = await this.request('GET', path)
+      const status = await parsedResponse<IAPIRefStatus>(response)
+      return status
+    } catch (e) {
+      log.warn(
+        `fetchCombinedRefStatus: failed for repository ${owner}/${name} on ref ${ref}`,
+        e
+      )
+      throw e
+    }
+  }
+
   /**
    * Authenticated requests to a paginating resource such as issues.
    *
@@ -375,6 +477,10 @@ export class API {
       const response = await this.request('GET', nextPath)
       if (response.status === HttpStatusCode.NotFound) {
         log.warn(`fetchAll: '${path}' returned a 404`)
+        return []
+      }
+      if (response.status === HttpStatusCode.NotModified) {
+        log.warn(`fetchAll: '${path}' returned a 304`)
         return []
       }
 
@@ -439,21 +545,45 @@ export class API {
     try {
       const path = `repos/${owner}/${name}/mentionables/users`
       const response = await this.request('GET', path, undefined, headers)
-      if (response.status === HttpStatusCode.NotModified) {
+
+      if (response.status === HttpStatusCode.NotFound) {
+        log.warn(`fetchMentionables: '${path}' returned a 404`)
         return null
       }
-      if (response.status === HttpStatusCode.NotFound) {
-        log.warn(`fetchAll: '${path}' returned a 404`)
+
+      if (response.status === HttpStatusCode.NotModified) {
         return null
       }
       const users = await parsedResponse<ReadonlyArray<IAPIMentionableUser>>(
         response
       )
-      const responseEtag = response.headers.get('etag')
-      return { users, etag: responseEtag || '' }
+      const etag = response.headers.get('etag')
+      return { users, etag }
     } catch (e) {
       log.warn(`fetchMentionables: failed for ${owner}/${name}`, e)
       return null
+    }
+  }
+
+  /**
+   * Retrieve the public profile information of a user with
+   * a given username.
+   */
+  public async fetchUser(login: string): Promise<IAPIUser | null> {
+    try {
+      const response = await this.request(
+        'GET',
+        `users/${encodeURIComponent(login)}`
+      )
+
+      if (response.status === 404) {
+        return null
+      }
+
+      return await parsedResponse<IAPIUser>(response)
+    } catch (e) {
+      log.warn(`fetchUser: failed with endpoint ${this.endpoint}`, e)
+      throw e
     }
   }
 }
@@ -592,14 +722,20 @@ export async function fetchUser(
   try {
     const user = await api.fetchAccount()
     const emails = await api.fetchEmails()
+    const defaultEmail = getDefaultEmail(emails)
+    const avatarURL = getAvatarWithEnterpriseFallback(
+      user.avatar_url,
+      defaultEmail,
+      endpoint
+    )
     return new Account(
       user.login,
       endpoint,
       token,
       emails,
-      user.avatar_url,
+      avatarURL,
       user.id,
-      user.name
+      user.name || user.login
     )
   } catch (e) {
     log.warn(`fetchUser: failed with endpoint ${endpoint}`, e)
@@ -698,7 +834,12 @@ export function getEnterpriseAPIURL(endpoint: string): string {
 
 /** Get github.com's API endpoint. */
 export function getDotComAPIEndpoint(): string {
-  const envEndpoint = process.env['API_ENDPOINT']
+  // NOTE:
+  // `DESKTOP_GITHUB_DOTCOM_API_ENDPOINT` only needs to be set if you are
+  // developing against a local version of GitHub the Website, and need to debug
+  // the server-side interaction. For all other cases you should leave this
+  // unset.
+  const envEndpoint = process.env['DESKTOP_GITHUB_DOTCOM_API_ENDPOINT']
   if (envEndpoint && envEndpoint.length > 0) {
     return envEndpoint
   }
@@ -725,7 +866,6 @@ export function getOAuthAuthorizationURL(
 
 export async function requestOAuthToken(
   endpoint: string,
-  state: string,
   code: string
 ): Promise<string | null> {
   try {
@@ -739,7 +879,6 @@ export async function requestOAuthToken(
         client_id: ClientID,
         client_secret: ClientSecret,
         code: code,
-        state: state,
       }
     )
     const result = await parsedResponse<IAPIAccessToken>(response)

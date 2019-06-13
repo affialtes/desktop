@@ -1,3 +1,4 @@
+/* eslint-disable typescript/interface-name-prefix */
 /** Is the app running in dev mode? */
 declare const __DEV__: boolean
 
@@ -29,6 +30,8 @@ declare const __RELEASE_CHANNEL__:
   | 'test'
   | 'development'
 
+declare const __CLI_COMMANDS__: ReadonlyArray<string>
+
 /** The URL for Squirrel's updates. */
 declare const __UPDATES_URL__: string
 
@@ -36,21 +39,12 @@ declare const __UPDATES_URL__: string
  * The currently executing process kind, this is specific to desktop
  * and identifies the processes that we have.
  */
-declare const __PROCESS_KIND__: 'main' | 'ui' | 'crash' | 'askpass'
-
-/**
- * The DOMHighResTimeStamp type is a double and is used to store a time value.
- *
- * The value could be a discrete point in time or the difference in time between
- * two discrete points in time. The unit is milliseconds and should be accurate
- * to 5 µs (microseconds). However, if the browser is unable to provide a time
- * value accurate to 5 microseconds (due, for example, to hardware or software
- * constraints), the browser can represent the value as a time in milliseconds
- * accurate to a millisecond.
- *
- * See https://developer.mozilla.org/en-US/docs/Web/API/DOMHighResTimeStamp
- */
-declare type DOMHighResTimeStamp = number
+declare const __PROCESS_KIND__:
+  | 'main'
+  | 'ui'
+  | 'crash'
+  | 'askpass'
+  | 'highlighter'
 
 /**
  * The IdleDeadline interface is used as the data type of the input parameter to
@@ -177,7 +171,6 @@ declare const log: IDesktopLogger
 // these changes should be pushed into the Electron declarations
 
 declare namespace NodeJS {
-  // tslint:disable-next-line:interface-name
   interface Process extends EventEmitter {
     once(event: 'uncaughtException', listener: (error: Error) => void): this
     on(event: 'uncaughtException', listener: (error: Error) => void): this
@@ -186,8 +179,15 @@ declare namespace NodeJS {
   }
 }
 
+interface XMLHttpRequest extends XMLHttpRequestEventTarget {
+  /**
+   * Initiates the request. The optional argument provides the request body. The argument is ignored if request method is GET or HEAD.
+   * Throws an "InvalidStateError" DOMException if either state is not opened or the send() flag is set.
+   */
+  send(body?: Document | BodyInit | null): void
+}
+
 declare namespace Electron {
-  // tslint:disable-next-line:interface-name
   interface MenuItem {
     readonly accelerator?: Electron.Accelerator
     readonly submenu?: Electron.Menu
@@ -195,7 +195,6 @@ declare namespace Electron {
     readonly type: 'normal' | 'separator' | 'submenu' | 'checkbox' | 'radio'
   }
 
-  // tslint:disable-next-line:interface-name
   interface RequestOptions {
     readonly method: string
     readonly url: string
@@ -204,7 +203,6 @@ declare namespace Electron {
 
   type AppleActionOnDoubleClickPref = 'Maximize' | 'Minimize' | 'None'
 
-  // tslint:disable-next-line:interface-name
   interface SystemPreferences {
     getUserDefault(
       key: 'AppleActionOnDoubleClick',

@@ -1,6 +1,6 @@
 import { OcticonSymbol } from '../octicons'
 import { Repository } from '../../models/repository'
-import { CloningRepository } from '../../lib/dispatcher'
+import { CloningRepository } from '../../models/cloning-repository'
 
 /**
  * Determine the octicon to display for a given repository.
@@ -8,6 +8,10 @@ import { CloningRepository } from '../../lib/dispatcher'
 export function iconForRepository(repository: Repository | CloningRepository) {
   if (repository instanceof CloningRepository) {
     return OcticonSymbol.desktopDownload
+  }
+
+  if (repository.missing) {
+    return OcticonSymbol.alert
   }
 
   const gitHubRepo = repository.gitHubRepository

@@ -6,6 +6,9 @@ import { Select } from '../lib/select'
 import { DialogContent } from '../dialog'
 import { Row } from '../lib/row'
 import { merge } from '../../lib/merge'
+import { caseInsensitiveCompare } from '../../lib/compare'
+import { sanitizedRepositoryName } from '../add-repository/sanitized-repository-name'
+import { Octicon, OcticonSymbol } from '../octicons'
 
 interface IPublishRepositoryProps {
   /** The user to use for publishing. */
@@ -44,10 +47,14 @@ export class PublishRepository extends React.Component<
   IPublishRepositoryProps,
   IPublishRepositoryState
 > {
+  /** The repository name entered by the user. It has not yet been sanitized. */
+  private name: string
+
   public constructor(props: IPublishRepositoryProps) {
     super(props)
 
     this.state = { orgs: [] }
+    this.name = props.settings.name
   }
 
   public async componentWillMount() {
@@ -64,7 +71,8 @@ export class PublishRepository extends React.Component<
 
   private async fetchOrgs(account: Account) {
     const api = API.fromAccount(account)
-    const orgs = await api.fetchOrgs()
+    const orgs = (await api.fetchOrgs()) as Array<IAPIUser>
+    orgs.sort((a, b) => caseInsensitiveCompare(a.login, b.login))
     this.setState({ orgs })
   }
 
@@ -76,12 +84,15 @@ export class PublishRepository extends React.Component<
     this.props.onSettingsChanged(newSettings)
   }
 
-  private onNameChange = (event: React.FormEvent<HTMLInputElement>) => {
-    this.updateSettings({ name: event.currentTarget.value })
+  private onNameChange = (name: string) => {
+    this.name = name
+
+    name = sanitizedRepositoryName(name)
+    this.updateSettings({ name })
   }
 
-  private onDescriptionChange = (event: React.FormEvent<HTMLInputElement>) => {
-    this.updateSettings({ description: event.currentTarget.value })
+  private onDescriptionChange = (description: string) => {
+    this.updateSettings({ description })
   }
 
   private onPrivateChange = (event: React.FormEvent<HTMLInputElement>) => {
@@ -99,7 +110,11 @@ export class PublishRepository extends React.Component<
     }
   }
 
-  private renderOrgs() {
+  private renderOrgs(): JSX.Element | null {
+    if (this.state.orgs.length === 0) {
+      return null
+    }
+
     const options = new Array<JSX.Element>()
     options.push(
       <option value={-1} key={-1}>
@@ -138,17 +153,19 @@ export class PublishRepository extends React.Component<
         <Row>
           <TextBox
             label="Name"
-            value={this.props.settings.name}
+            value={this.name}
             autoFocus={true}
-            onChange={this.onNameChange}
+            onValueChanged={this.onNameChange}
           />
         </Row>
+
+        {this.renderSanitizedName()}
 
         <Row>
           <TextBox
             label="Description"
             value={this.props.settings.description}
-            onChange={this.onDescriptionChange}
+            onValueChanged={this.onDescriptionChange}
           />
         </Row>
 
@@ -165,6 +182,20 @@ export class PublishRepository extends React.Component<
 
         {this.renderOrgs()}
       </DialogContent>
+    )
+  }
+
+  private renderSanitizedName() {
+    const sanitizedName = this.props.settings.name
+    if (this.name === sanitizedName) {
+      return null
+    }
+
+    return (
+      <Row className="warning-helper-text">
+        <Octicon symbol={OcticonSymbol.alert} />
+        Will be created as {sanitizedName}
+      </Row>
     )
   }
 }

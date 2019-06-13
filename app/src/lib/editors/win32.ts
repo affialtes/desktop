@@ -1,10 +1,48 @@
 import * as Path from 'path'
-import { pathExists } from '../file-system'
-import { ExternalEditor } from '../../models/editors'
-import { LookupResult, FoundEditor } from './shared'
+
+import {
+  enumerateValues,
+  HKEY,
+  RegistryValue,
+  RegistryValueType,
+} from 'registry-js'
+
+import { pathExists } from 'fs-extra'
+import { IFoundEditor } from './found-editor'
 
 import { assertNever } from '../fatal-error'
-import { IRegistryEntry, readRegistryKeySafe } from '../registry'
+
+export enum ExternalEditor {
+  Atom = 'Atom',
+  VisualStudioCode = 'Visual Studio Code',
+  VisualStudioCodeInsiders = 'Visual Studio Code (Insiders)',
+  SublimeText = 'Sublime Text',
+  CFBuilder = 'ColdFusion Builder',
+  Typora = 'Typora',
+}
+
+export function parse(label: string): ExternalEditor | null {
+  if (label === ExternalEditor.Atom) {
+    return ExternalEditor.Atom
+  }
+  if (label === ExternalEditor.VisualStudioCode) {
+    return ExternalEditor.VisualStudioCode
+  }
+  if (label === ExternalEditor.VisualStudioCodeInsiders) {
+    return ExternalEditor.VisualStudioCodeInsiders
+  }
+  if (label === ExternalEditor.SublimeText) {
+    return ExternalEditor.SublimeText
+  }
+  if (label === ExternalEditor.CFBuilder) {
+    return ExternalEditor.CFBuilder
+  }
+  if (label === ExternalEditor.Typora) {
+    return ExternalEditor.Typora
+  }
+
+  return null
+}
 
 /**
  * Resolve a set of registry keys associated with the installed application.
@@ -14,23 +52,111 @@ import { IRegistryEntry, readRegistryKeySafe } from '../registry'
  *
  * @param editor The external editor that may be installed locally.
  */
-function getRegistryKeys(editor: ExternalEditor): ReadonlyArray<string> {
+function getRegistryKeys(
+  editor: ExternalEditor
+): ReadonlyArray<{ key: HKEY; subKey: string }> {
   switch (editor) {
     case ExternalEditor.Atom:
       return [
-        'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\atom',
+        {
+          key: HKEY.HKEY_CURRENT_USER,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\atom',
+        },
       ]
     case ExternalEditor.VisualStudioCode:
       return [
-        // 64-bit version of VSCode - not available from home page but just made available
-        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{EA457B21-F73E-494C-ACAB-524FDE069978}_is1',
-        // 32-bit version of VSCode - what most people will be using for the forseeable future
-        'HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{F8A2A208-72B3-4D61-95FC-8A65D340689B}_is1',
+        // 64-bit version of VSCode (user) - provided by default in 64-bit Windows
+        {
+          key: HKEY.HKEY_CURRENT_USER,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{771FD6B0-FA20-440A-A002-3B3BAC16DC50}_is1',
+        },
+        // 32-bit version of VSCode (user)
+        {
+          key: HKEY.HKEY_CURRENT_USER,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{D628A17A-9713-46BF-8D57-E671B46A741E}_is1',
+        },
+        // 64-bit version of VSCode (system) - was default before user scope installation
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{EA457B21-F73E-494C-ACAB-524FDE069978}_is1',
+        },
+        // 32-bit version of VSCode (system)
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{F8A2A208-72B3-4D61-95FC-8A65D340689B}_is1',
+        },
+      ]
+    case ExternalEditor.VisualStudioCodeInsiders:
+      return [
+        // 64-bit version of VSCode (user) - provided by default in 64-bit Windows
+        {
+          key: HKEY.HKEY_CURRENT_USER,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{217B4C08-948D-4276-BFBB-BEE930AE5A2C}_is1',
+        },
+        // 32-bit version of VSCode (user)
+        {
+          key: HKEY.HKEY_CURRENT_USER,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{26F4A15E-E392-4887-8C09-7BC55712FD5B}_is1',
+        },
+        // 64-bit version of VSCode (system) - was default before user scope installation
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{1287CAD5-7C8D-410D-88B9-0D1EE4A83FF2}_is1',
+        },
+        // 32-bit version of VSCode (system)
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{C26E74D1-022E-4238-8B9D-1E7564A36CC9}_is1',
+        },
       ]
     case ExternalEditor.SublimeText:
       return [
-        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Sublime Text 3_is1',
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Sublime Text 3_is1',
+        },
       ]
+    case ExternalEditor.CFBuilder:
+      return [
+        // 64-bit version of ColdFusionBuilder3
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Adobe ColdFusion Builder 3_is1',
+        },
+        // 64-bit version of ColdFusionBuilder2016
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Adobe ColdFusion Builder 2016',
+        },
+      ]
+    case ExternalEditor.Typora:
+      return [
+        // 64-bit version of Typora
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{37771A20-7167-44C0-B322-FD3E54C56156}_is1',
+        },
+        // 32-bit version of Typora
+        {
+          key: HKEY.HKEY_LOCAL_MACHINE,
+          subKey:
+            'SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{37771A20-7167-44C0-B322-FD3E54C56156}_is1',
+        },
+      ]
+
     default:
       return assertNever(editor, `Unknown external editor: ${editor}`)
   }
@@ -51,8 +177,14 @@ function getExecutableShim(
       return Path.join(installLocation, 'bin', 'atom.cmd')
     case ExternalEditor.VisualStudioCode:
       return Path.join(installLocation, 'bin', 'code.cmd')
+    case ExternalEditor.VisualStudioCodeInsiders:
+      return Path.join(installLocation, 'bin', 'code-insiders.cmd')
     case ExternalEditor.SublimeText:
       return Path.join(installLocation, 'subl.exe')
+    case ExternalEditor.CFBuilder:
+      return Path.join(installLocation, 'CFBuilder.exe')
+    case ExternalEditor.Typora:
+      return Path.join(installLocation, 'bin', 'typora.exe')
     default:
       return assertNever(editor, `Unknown external editor: ${editor}`)
   }
@@ -75,17 +207,37 @@ function isExpectedInstallation(
       return displayName === 'Atom' && publisher === 'GitHub Inc.'
     case ExternalEditor.VisualStudioCode:
       return (
-        displayName === 'Visual Studio Code' &&
+        displayName.startsWith('Microsoft Visual Studio Code') &&
+        publisher === 'Microsoft Corporation'
+      )
+    case ExternalEditor.VisualStudioCodeInsiders:
+      return (
+        displayName.startsWith('Microsoft Visual Studio Code Insiders') &&
         publisher === 'Microsoft Corporation'
       )
     case ExternalEditor.SublimeText:
       return (
         displayName === 'Sublime Text' && publisher === 'Sublime HQ Pty Ltd'
       )
-
+    case ExternalEditor.CFBuilder:
+      return (
+        (displayName === 'Adobe ColdFusion Builder 3' ||
+          displayName === 'Adobe ColdFusion Builder 2016') &&
+        publisher === 'Adobe Systems Incorporated'
+      )
+    case ExternalEditor.Typora:
+      return displayName.startsWith('Typora') && publisher === 'typora.io'
     default:
       return assertNever(editor, `Unknown external editor: ${editor}`)
   }
+}
+
+function getKeyOrEmpty(
+  keys: ReadonlyArray<RegistryValue>,
+  key: string
+): string {
+  const entry = keys.find(k => k.name === key)
+  return entry && entry.type === RegistryValueType.REG_SZ ? entry.data : ''
 }
 
 /**
@@ -96,59 +248,86 @@ function isExpectedInstallation(
  */
 function extractApplicationInformation(
   editor: ExternalEditor,
-  keys: ReadonlyArray<IRegistryEntry>
+  keys: ReadonlyArray<RegistryValue>
 ): { displayName: string; publisher: string; installLocation: string } {
-  let displayName = ''
-  let publisher = ''
-  let installLocation = ''
-
   if (editor === ExternalEditor.Atom) {
+    const displayName = getKeyOrEmpty(keys, 'DisplayName')
+    const publisher = getKeyOrEmpty(keys, 'Publisher')
+    const installLocation = getKeyOrEmpty(keys, 'InstallLocation')
+    return { displayName, publisher, installLocation }
+  }
+
+  if (
+    editor === ExternalEditor.VisualStudioCode ||
+    editor === ExternalEditor.VisualStudioCodeInsiders
+  ) {
+    const displayName = getKeyOrEmpty(keys, 'DisplayName')
+    const publisher = getKeyOrEmpty(keys, 'Publisher')
+    const installLocation = getKeyOrEmpty(keys, 'InstallLocation')
+    return { displayName, publisher, installLocation }
+  }
+
+  if (editor === ExternalEditor.SublimeText) {
+    let displayName = ''
+    let publisher = ''
+    let installLocation = ''
+
     for (const item of keys) {
-      if (item.name === 'DisplayName') {
-        displayName = item.value
-      } else if (item.name === 'Publisher') {
-        publisher = item.value
-      } else if (item.name === 'InstallLocation') {
-        installLocation = item.value
+      // NOTE:
+      // Sublime Text appends the build number to the DisplayName value, so for
+      // forward-compatibility let's do a simple check for the identifier
+      if (
+        item.name === 'DisplayName' &&
+        item.type === RegistryValueType.REG_SZ &&
+        item.data.startsWith('Sublime Text')
+      ) {
+        displayName = 'Sublime Text'
+      } else if (
+        item.name === 'Publisher' &&
+        item.type === RegistryValueType.REG_SZ
+      ) {
+        publisher = item.data
+      } else if (
+        item.name === 'InstallLocation' &&
+        item.type === RegistryValueType.REG_SZ
+      ) {
+        installLocation = item.data
       }
     }
 
     return { displayName, publisher, installLocation }
   }
 
-  if (
-    editor === ExternalEditor.VisualStudioCode ||
-    editor === ExternalEditor.SublimeText
-  ) {
-    for (const item of keys) {
-      if (item.name === 'Inno Setup: Icon Group') {
-        displayName = item.value
-      } else if (item.name === 'Publisher') {
-        publisher = item.value
-      } else if (item.name === 'Inno Setup: App Path') {
-        installLocation = item.value
-      }
-    }
+  if (editor === ExternalEditor.CFBuilder) {
+    const displayName = getKeyOrEmpty(keys, 'DisplayName')
+    const publisher = getKeyOrEmpty(keys, 'Publisher')
+    const installLocation = getKeyOrEmpty(keys, 'InstallLocation')
+    return { displayName, publisher, installLocation }
+  }
 
+  if (editor === ExternalEditor.Typora) {
+    const displayName = getKeyOrEmpty(keys, 'DisplayName')
+    const publisher = getKeyOrEmpty(keys, 'Publisher')
+    const installLocation = getKeyOrEmpty(keys, 'InstallLocation')
     return { displayName, publisher, installLocation }
   }
 
   return assertNever(editor, `Unknown external editor: ${editor}`)
 }
 
-async function findApplication(editor: ExternalEditor): Promise<LookupResult> {
+async function findApplication(editor: ExternalEditor): Promise<string | null> {
   const registryKeys = getRegistryKeys(editor)
 
-  let keys: ReadonlyArray<IRegistryEntry> = []
-  for (const key of registryKeys) {
-    keys = await readRegistryKeySafe(key)
+  let keys: ReadonlyArray<RegistryValue> = []
+  for (const { key, subKey } of registryKeys) {
+    keys = enumerateValues(key, subKey)
     if (keys.length > 0) {
       break
     }
   }
 
   if (keys.length === 0) {
-    return { editor, installed: false }
+    return null
   }
 
   const {
@@ -161,30 +340,17 @@ async function findApplication(editor: ExternalEditor): Promise<LookupResult> {
     log.debug(
       `Registry entry for ${editor} did not match expected publisher settings`
     )
-    return {
-      editor,
-      installed: true,
-      pathExists: false,
-    }
+    return null
   }
 
   const path = getExecutableShim(editor, installLocation)
   const exists = await pathExists(path)
   if (!exists) {
     log.debug(`Command line interface for ${editor} not found at '${path}'`)
-    return {
-      editor,
-      installed: true,
-      pathExists: false,
-    }
+    return null
   }
 
-  return {
-    editor,
-    installed: true,
-    pathExists: true,
-    path,
-  }
+  return path
 }
 
 /**
@@ -192,50 +358,67 @@ async function findApplication(editor: ExternalEditor): Promise<LookupResult> {
  * applications and their location on disk for Desktop to launch.
  */
 export async function getAvailableEditors(): Promise<
-  ReadonlyArray<FoundEditor>
+  ReadonlyArray<IFoundEditor<ExternalEditor>>
 > {
-  const results: Array<FoundEditor> = []
+  const results: Array<IFoundEditor<ExternalEditor>> = []
 
-  const [atom, code, sublime] = await Promise.all([
+  const [
+    atomPath,
+    codePath,
+    codeInsidersPath,
+    sublimePath,
+    cfBuilderPath,
+    typoraPath,
+  ] = await Promise.all([
     findApplication(ExternalEditor.Atom),
     findApplication(ExternalEditor.VisualStudioCode),
+    findApplication(ExternalEditor.VisualStudioCodeInsiders),
     findApplication(ExternalEditor.SublimeText),
+    findApplication(ExternalEditor.CFBuilder),
+    findApplication(ExternalEditor.Typora),
   ])
 
-  if (atom.installed && atom.pathExists) {
-    results.push({ editor: atom.editor, path: atom.path })
+  if (atomPath) {
+    results.push({
+      editor: ExternalEditor.Atom,
+      path: atomPath,
+    })
   }
 
-  if (code.installed && code.pathExists) {
-    results.push({ editor: code.editor, path: code.path })
+  if (codePath) {
+    results.push({
+      editor: ExternalEditor.VisualStudioCode,
+      path: codePath,
+    })
   }
 
-  if (sublime.installed && sublime.pathExists) {
-    results.push({ editor: sublime.editor, path: sublime.path })
+  if (codeInsidersPath) {
+    results.push({
+      editor: ExternalEditor.VisualStudioCodeInsiders,
+      path: codeInsidersPath,
+    })
+  }
+
+  if (sublimePath) {
+    results.push({
+      editor: ExternalEditor.SublimeText,
+      path: sublimePath,
+    })
+  }
+
+  if (cfBuilderPath) {
+    results.push({
+      editor: ExternalEditor.CFBuilder,
+      path: cfBuilderPath,
+    })
+  }
+
+  if (typoraPath) {
+    results.push({
+      editor: ExternalEditor.Typora,
+      path: typoraPath,
+    })
   }
 
   return results
-}
-
-/**
- * Find the first editor that exists on the user's machine, or return null if
- * no matches are found.
- */
-export async function getFirstEditorOrDefault(): Promise<FoundEditor | null> {
-  const atom = await findApplication(ExternalEditor.Atom)
-  if (atom.installed && atom.pathExists) {
-    return { editor: atom.editor, path: atom.path }
-  }
-
-  const code = await findApplication(ExternalEditor.VisualStudioCode)
-  if (code.installed && code.pathExists) {
-    return { editor: code.editor, path: code.path }
-  }
-
-  const sublime = await findApplication(ExternalEditor.SublimeText)
-  if (sublime.installed && sublime.pathExists) {
-    return { editor: sublime.editor, path: sublime.path }
-  }
-
-  return null
 }

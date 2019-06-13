@@ -1,7 +1,6 @@
 import * as Path from 'path'
 
 import { git } from './core'
-import { Repository } from '../../models/repository'
 import { RepositoryDoesNotExistErrorCode } from 'dugite'
 
 /**
@@ -54,22 +53,26 @@ export async function getTopLevelWorkingDirectory(
 }
 
 /**
- * Attempts to dereference the HEAD symbolic link to a commit sha.
- * Returns null if HEAD is unborn.
+ * Checks if the repository at a path is bare.
+ *
+ * @param path The path to the repository to check. An error will be thrown if the path does not exist on disk.
+ *
+ * @returns true if the path contains a bare Git repository. Returns false if it is not bare or is not a Git repository.
  */
-export async function resolveHEAD(
-  repository: Repository
-): Promise<string | null> {
-  const result = await git(
-    ['rev-parse', '--verify', 'HEAD^{commit}'],
-    repository.path,
-    'resolveHEAD',
-    { successExitCodes: new Set([0, 128]) }
-  )
-  if (result.exitCode === 0) {
-    return result.stdout
-  } else {
-    return null
+export async function isBareRepository(path: string): Promise<boolean> {
+  try {
+    const result = await git(
+      ['rev-parse', '--is-bare-repository'],
+      path,
+      'isBareRepository'
+    )
+    return result.stdout.trim() === 'true'
+  } catch (e) {
+    if (e.message.includes('not a git repository')) {
+      return false
+    }
+
+    throw e
   }
 }
 

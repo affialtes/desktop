@@ -1,16 +1,49 @@
-/* tslint:disable:no-sync-functions */
+/* eslint-disable no-sync */
+/// <reference path="./globals.d.ts" />
 
 import * as path from 'path'
 import * as cp from 'child_process'
 import * as fs from 'fs-extra'
 import * as packager from 'electron-packager'
 
-const legalEagle: LegalEagle = require('legal-eagle')
+import { licenseOverrides } from './license-overrides'
 
-const distInfo = require('./dist-info')
-const getReleaseChannel: () => string = distInfo.getReleaseChannel
-const getVersion: () => string = distInfo.getVersion
-const getExecutableName: () => string = distInfo.getExecutableName
+import { externals } from '../app/webpack.common'
+
+import * as legalEagle from 'legal-eagle'
+
+interface IFrontMatterResult<T> {
+  readonly attributes: T
+  readonly body: string
+}
+
+interface IChooseALicense {
+  readonly title: string
+  readonly nickname?: string
+  readonly featured?: boolean
+  readonly hidden?: boolean
+}
+
+export interface ILicense {
+  readonly name: string
+  readonly featured: boolean
+  readonly body: string
+  readonly hidden: boolean
+}
+
+const frontMatter: <T>(
+  path: string
+) => IFrontMatterResult<T> = require('front-matter')
+
+import {
+  getBundleID,
+  getCompanyName,
+  getProductName,
+  getVersion,
+} from '../app/package-info'
+
+import { getReleaseChannel, getDistRoot, getExecutableName } from './dist-info'
+import { isRunningOnFork, isCircleCI } from './build-platforms'
 
 const projectRoot = path.join(__dirname, '..')
 const outRoot = path.join(projectRoot, 'out')
@@ -20,7 +53,7 @@ const isPublishableBuild = getReleaseChannel() !== 'development'
 console.log(`Building for ${getReleaseChannel()}…`)
 
 console.log('Removing old distribution…')
-fs.removeSync(path.join(projectRoot, 'dist'))
+fs.removeSync(getDistRoot())
 
 console.log('Copying dependencies…')
 copyDependencies()
@@ -31,14 +64,18 @@ copyEmoji()
 console.log('Copying static resources…')
 copyStaticResources()
 
-const isFork = process.env.CIRCLE_PR_USERNAME
-if (process.platform === 'darwin' && process.env.CIRCLECI && !isFork) {
+console.log('Parsing license metadata…')
+generateLicenseMetadata(outRoot)
+
+moveAnalysisFiles()
+
+if (isCircleCI() && !isRunningOnFork()) {
   console.log('Setting up keychain…')
   cp.execSync(path.join(__dirname, 'setup-macos-keychain'))
 }
 
 console.log('Updating our licenses dump…')
-updateLicenseDump(err => {
+updateLicenseDump(async err => {
   if (err) {
     console.error(
       'Error updating the license dump. This is fatal for a published build.'
@@ -47,19 +84,17 @@ updateLicenseDump(err => {
 
     if (isPublishableBuild) {
       process.exit(1)
-      return
     }
   }
 
   console.log('Packaging…')
-  packageApp((err, appPaths) => {
-    if (err) {
-      console.error(err)
-      process.exit(1)
-    } else {
-      console.log(`Built to ${appPaths}`)
-    }
-  })
+  try {
+    const appPaths = await packageApp()
+    console.log(`Built to ${appPaths}`)
+  } catch (err) {
+    console.error(err)
+    process.exit(1)
+  }
 })
 
 /**
@@ -74,9 +109,7 @@ interface IPackageAdditionalOptions {
   }>
 }
 
-function packageApp(
-  callback: (error: Error | null, appPaths: string | string[]) => void
-) {
+function packageApp() {
   // not sure if this is needed anywhere, so I'm just going to inline it here
   // for now and see what the future brings...
   const toPackagePlatform = (platform: NodeJS.Platform) => {
@@ -84,16 +117,32 @@ function packageApp(
       return platform
     }
     throw new Error(
-      `Unable to convert to platform for electron-packager: '${process.platform}`
+      `Unable to convert to platform for electron-packager: '${
+        process.platform
+      }`
+    )
+  }
+
+  const toPackageArch = (targetArch: string | undefined): packager.arch => {
+    if (targetArch === undefined) {
+      return 'x64'
+    }
+
+    if (targetArch === 'arm64' || targetArch === 'x64') {
+      return targetArch
+    }
+
+    throw new Error(
+      `Building Desktop for architecture '${targetArch}'  is not supported`
     )
   }
 
   const options: packager.Options & IPackageAdditionalOptions = {
     name: getExecutableName(),
     platform: toPackagePlatform(process.platform),
-    arch: 'x64',
+    arch: toPackageArch(process.env.TARGET_ARCH),
     asar: false, // TODO: Probably wanna enable this down the road.
-    out: path.join(projectRoot, 'dist'),
+    out: getDistRoot(),
     icon: path.join(projectRoot, 'app', 'static', 'logos', 'icon-logo'),
     dir: outRoot,
     overwrite: true,
@@ -109,12 +158,12 @@ function packageApp(
     appCopyright: 'Copyright © 2017 GitHub, Inc.',
 
     // macOS
-    appBundleId: distInfo.getBundleID(),
+    appBundleId: getBundleID(),
     appCategoryType: 'public.app-category.developer-tools',
     osxSign: true,
     protocols: [
       {
-        name: distInfo.getBundleID(),
+        name: getBundleID(),
         schemes: [
           isPublishableBuild
             ? 'x-github-desktop-auth'
@@ -124,24 +173,19 @@ function packageApp(
         ],
       },
     ],
+    extendInfo: `${projectRoot}/script/info.plist`,
 
     // Windows
     win32metadata: {
-      CompanyName: distInfo.getCompanyName(),
+      CompanyName: getCompanyName(),
       FileDescription: '',
       OriginalFilename: '',
-      ProductName: distInfo.getProductName(),
-      InternalName: distInfo.getProductName(),
+      ProductName: getProductName(),
+      InternalName: getProductName(),
     },
   }
 
-  packager(options, (err: Error, appPaths: string | string[]) => {
-    if (err) {
-      callback(err, appPaths)
-    } else {
-      callback(null, appPaths)
-    }
-  })
+  return packager(options)
 }
 
 function removeAndCopy(source: string, destination: string) {
@@ -168,18 +212,33 @@ function copyStaticResources() {
   if (fs.existsSync(platformSpecific)) {
     fs.copySync(platformSpecific, destination)
   }
-  fs.copySync(common, destination, { clobber: false })
+  fs.copySync(common, destination, { overwrite: false })
+}
+
+function moveAnalysisFiles() {
+  const rendererReport = 'renderer.report.html'
+  const analysisSource = path.join(outRoot, rendererReport)
+  if (fs.existsSync(analysisSource)) {
+    const distRoot = getDistRoot()
+    const destination = path.join(distRoot, rendererReport)
+    fs.mkdirpSync(distRoot)
+    // there's no moveSync API here, so let's do it the old fashioned way
+    //
+    // unlinkSync below ensures that the analysis file isn't bundled into
+    // the app by accident
+    fs.copySync(analysisSource, destination, { overwrite: true })
+    fs.unlinkSync(analysisSource)
+  }
 }
 
 function copyDependencies() {
+  // eslint-disable-next-line import/no-dynamic-require
   const originalPackage: Package = require(path.join(
     projectRoot,
     'app',
     'package.json'
   ))
 
-  const commonConfig = require(path.resolve(__dirname, '../app/webpack.common'))
-  const externals = commonConfig.externals
   const oldDependencies = originalPackage.dependencies
   const newDependencies: PackageLookup = {}
 
@@ -205,7 +264,7 @@ function copyDependencies() {
   // The product name changes depending on whether it's a prod build or dev
   // build, so that we can have them running side by side.
   const updatedPackage = Object.assign({}, originalPackage, {
-    productName: distInfo.getProductName(),
+    productName: getProductName(),
     dependencies: newDependencies,
     devDependencies: newDevDependencies,
   })
@@ -225,8 +284,8 @@ function copyDependencies() {
     Object.keys(newDependencies).length ||
     Object.keys(newDevDependencies).length
   ) {
-    console.log('  Installing npm dependencies…')
-    cp.execSync('npm install', { cwd: outRoot, env: process.env })
+    console.log('  Installing dependencies via yarn…')
+    cp.execSync('yarn install', { cwd: outRoot, env: process.env })
   }
 
   if (!isPublishableBuild) {
@@ -247,8 +306,34 @@ function copyDependencies() {
   fs.mkdirpSync(gitDir)
   fs.copySync(path.resolve(projectRoot, 'app/node_modules/dugite/git'), gitDir)
 
+  if (process.platform === 'win32') {
+    console.log('  Cleaning unneeded Git components…')
+    const files = [
+      'Bitbucket.Authentication.dll',
+      'GitHub.Authentication.exe',
+      'Microsoft.Alm.Authentication.dll',
+      'Microsoft.Alm.Git.dll',
+      'Microsoft.IdentityModel.Clients.ActiveDirectory.Platform.dll',
+      'Microsoft.IdentityModel.Clients.ActiveDirectory.dll',
+      'Microsoft.Vsts.Authentication.dll',
+      'git-askpass.exe',
+      'git-credential-manager.exe',
+    ]
+
+    const gitCoreDir = path.join(gitDir, 'mingw64', 'libexec', 'git-core')
+
+    for (const file of files) {
+      const filePath = path.join(gitCoreDir, file)
+      try {
+        fs.unlinkSync(filePath)
+      } catch (err) {
+        // probably already cleaned up
+      }
+    }
+  }
+
   if (process.platform === 'darwin') {
-    console.log('  Copying app-path binary...')
+    console.log('  Copying app-path binary…')
     const appPathMain = path.resolve(outRoot, 'main')
     fs.removeSync(appPathMain)
     fs.copySync(
@@ -261,7 +346,6 @@ function copyDependencies() {
 function updateLicenseDump(callback: (err: Error | null) => void) {
   const appRoot = path.join(projectRoot, 'app')
   const outPath = path.join(outRoot, 'static', 'licenses.json')
-  const licenseOverrides: LicenseLookup = require('./license-overrides')
 
   legalEagle(
     { path: appRoot, overrides: licenseOverrides, omitPermissive: true },
@@ -276,7 +360,9 @@ function updateLicenseDump(callback: (err: Error | null) => void) {
         let licensesMessage = ''
         for (const key in summary) {
           const license = summary[key]
-          licensesMessage += `${key} (${license.repository}): ${license.license}\n`
+          licensesMessage += `${key} (${license.repository}): ${
+            license.license
+          }\n`
         }
 
         const message = `The following dependencies have unknown or non-permissive licenses. Check it out and update ${overridesPath} if appropriate:\n${licensesMessage}`
@@ -315,4 +401,55 @@ function updateLicenseDump(callback: (err: Error | null) => void) {
       }
     }
   )
+}
+
+function generateLicenseMetadata(outRoot: string) {
+  const chooseALicense = path.join(outRoot, 'static', 'choosealicense.com')
+  const licensesDir = path.join(chooseALicense, '_licenses')
+
+  const files = fs.readdirSync(licensesDir)
+
+  const licenses = new Array<ILicense>()
+  for (const file of files) {
+    const fullPath = path.join(licensesDir, file)
+    const contents = fs.readFileSync(fullPath, 'utf8')
+    const result = frontMatter<IChooseALicense>(contents)
+    const license: ILicense = {
+      name: result.attributes.nickname || result.attributes.title,
+      featured: result.attributes.featured || false,
+      hidden:
+        result.attributes.hidden === undefined || result.attributes.hidden,
+      body: result.body.trim(),
+    }
+
+    if (!license.hidden) {
+      licenses.push(license)
+    }
+  }
+
+  const licensePayload = path.join(outRoot, 'static', 'available-licenses.json')
+  const text = JSON.stringify(licenses)
+  fs.writeFileSync(licensePayload, text, 'utf8')
+
+  // embed the license alongside the generated license payload
+  const chooseALicenseLicense = path.join(chooseALicense, 'LICENSE.md')
+  const licenseDestination = path.join(
+    outRoot,
+    'static',
+    'LICENSE.choosealicense.md'
+  )
+
+  const licenseText = fs.readFileSync(chooseALicenseLicense, 'utf8')
+  const licenseWithHeader = `GitHub Desktop uses licensing information provided by choosealicense.com.
+
+The bundle in available-licenses.json has been generated from a source list provided at https://github.com/github/choosealicense.com, which is made available under the below license:
+
+------------
+
+${licenseText}`
+
+  fs.writeFileSync(licenseDestination, licenseWithHeader, 'utf8')
+
+  // sweep up the choosealicense directory as the important bits have been bundled in the app
+  fs.removeSync(chooseALicense)
 }

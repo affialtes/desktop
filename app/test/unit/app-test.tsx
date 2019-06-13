@@ -1,35 +1,41 @@
-import * as chai from 'chai'
-const expect = chai.expect
+import { expect } from 'chai'
 
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
-import * as TestUtils from 'react-addons-test-utils'
+import * as TestUtils from 'react-dom/test-utils'
 
 import { App } from '../../src/ui/app'
+import { Dispatcher } from '../../src/lib/dispatcher'
 import {
-  Dispatcher,
   AppStore,
   GitHubUserStore,
   CloningRepositoriesStore,
-  EmojiStore,
   IssuesStore,
   SignInStore,
   RepositoriesStore,
   AccountsStore,
-} from '../../src/lib/dispatcher'
-import { InMemoryDispatcher } from '../in-memory-dispatcher'
-import { TestGitHubUserDatabase } from '../test-github-user-database'
-import { TestStatsDatabase } from '../test-stats-database'
-import { TestIssuesDatabase } from '../test-issues-database'
-import { TestRepositoriesDatabase } from '../test-repositories-database'
+  PullRequestStore,
+} from '../../src/lib/stores'
+import { InMemoryDispatcher } from '../helpers/in-memory-dispatcher'
+import {
+  TestGitHubUserDatabase,
+  TestStatsDatabase,
+  TestIssuesDatabase,
+  TestRepositoriesDatabase,
+  TestPullRequestDatabase,
+} from '../helpers/databases'
 import { StatsStore } from '../../src/lib/stats'
-import { InMemoryStore } from '../in-memory-store'
-import { AsyncInMemoryStore } from '../async-in-memory-store'
+import { InMemoryStore, AsyncInMemoryStore } from '../helpers/stores'
+import { TestActivityMonitor } from '../helpers/test-activity-monitor'
+import { RepositoryStateCache } from '../../src/lib/stores/repository-state-cache'
 
 describe('App', () => {
   let appStore: AppStore | null = null
   let dispatcher: Dispatcher | null = null
   let statsStore: StatsStore | null = null
+  let repositoryStateManager: RepositoryStateCache | null = null
+  let githubUserStore: GitHubUserStore | null = null
+  let issuesStore: IssuesStore | null = null
 
   beforeEach(async () => {
     const db = new TestGitHubUserDatabase()
@@ -40,7 +46,7 @@ describe('App', () => {
 
     const statsDb = new TestStatsDatabase()
     await statsDb.reset()
-    statsStore = new StatsStore(statsDb)
+    statsStore = new StatsStore(statsDb, new TestActivityMonitor())
 
     const repositoriesDb = new TestRepositoriesDatabase()
     await repositoriesDb.reset()
@@ -51,23 +57,47 @@ describe('App', () => {
       new AsyncInMemoryStore()
     )
 
-    appStore = new AppStore(
-      new GitHubUserStore(db),
-      new CloningRepositoriesStore(),
-      new EmojiStore(),
-      new IssuesStore(issuesDb),
-      statsStore,
-      new SignInStore(),
-      accountsStore,
+    const pullRequestStore = new PullRequestStore(
+      new TestPullRequestDatabase(),
       repositoriesStore
     )
 
-    dispatcher = new InMemoryDispatcher(appStore)
+    githubUserStore = new GitHubUserStore(db)
+    issuesStore = new IssuesStore(issuesDb)
+
+    repositoryStateManager = new RepositoryStateCache(repo =>
+      githubUserStore!.getUsersForRepository(repo)
+    )
+
+    appStore = new AppStore(
+      githubUserStore,
+      new CloningRepositoriesStore(),
+      issuesStore,
+      statsStore,
+      new SignInStore(),
+      accountsStore,
+      repositoriesStore,
+      pullRequestStore,
+      repositoryStateManager
+    )
+
+    dispatcher = new InMemoryDispatcher(
+      appStore,
+      repositoryStateManager,
+      statsStore
+    )
   })
 
   it('renders', async () => {
     const app = TestUtils.renderIntoDocument(
-      <App dispatcher={dispatcher!} appStore={appStore!} startTime={0} />
+      <App
+        dispatcher={dispatcher!}
+        appStore={appStore!}
+        repositoryStateManager={repositoryStateManager!}
+        issuesStore={issuesStore!}
+        gitHubUserStore={githubUserStore!}
+        startTime={0}
+      />
     ) as React.Component<any, any>
     // Give any promises a tick to resolve.
     await wait(0)

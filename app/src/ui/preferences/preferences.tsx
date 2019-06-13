@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { Account } from '../../models/account'
 import { PreferencesTab } from '../../models/preferences'
-import { ExternalEditor } from '../../models/editors'
+import { ExternalEditor } from '../../lib/editors'
 import { Dispatcher } from '../../lib/dispatcher'
 import { TabBar } from '../tab-bar'
 import { Accounts } from './accounts'
@@ -10,14 +10,19 @@ import { Git } from './git'
 import { assertNever } from '../../lib/fatal-error'
 import { Button } from '../lib/button'
 import { ButtonGroup } from '../lib/button-group'
-import { Dialog, DialogFooter } from '../dialog'
+import { Dialog, DialogFooter, DialogError } from '../dialog'
 import {
   getGlobalConfigValue,
   setGlobalConfigValue,
+  getMergeTool,
+  IMergeTool,
 } from '../../lib/git/config'
 import { lookupPreferredEmail } from '../../lib/email'
 import { Shell, getAvailableShells } from '../../lib/shells'
 import { getAvailableEditors } from '../../lib/editors/lookup'
+import { disallowedCharacters } from './identifier-rules'
+import { Appearance } from './appearance'
+import { ApplicationTheme } from '../lib/application-theme'
 
 interface IPreferencesProps {
   readonly dispatcher: Dispatcher
@@ -30,12 +35,14 @@ interface IPreferencesProps {
   readonly confirmDiscardChanges: boolean
   readonly selectedExternalEditor?: ExternalEditor
   readonly selectedShell: Shell
+  readonly selectedTheme: ApplicationTheme
 }
 
 interface IPreferencesState {
   readonly selectedIndex: PreferencesTab
   readonly committerName: string
   readonly committerEmail: string
+  readonly disallowedCharactersMessage: string | null
   readonly optOutOfUsageTracking: boolean
   readonly confirmRepositoryRemoval: boolean
   readonly confirmDiscardChanges: boolean
@@ -43,6 +50,7 @@ interface IPreferencesState {
   readonly selectedExternalEditor?: ExternalEditor
   readonly availableShells: ReadonlyArray<Shell>
   readonly selectedShell: Shell
+  readonly mergeTool: IMergeTool | null
 }
 
 /** The app-level preferences component. */
@@ -57,6 +65,7 @@ export class Preferences extends React.Component<
       selectedIndex: this.props.initialSelectedTab || PreferencesTab.Accounts,
       committerName: '',
       committerEmail: '',
+      disallowedCharactersMessage: null,
       availableEditors: [],
       optOutOfUsageTracking: false,
       confirmRepositoryRemoval: false,
@@ -64,6 +73,7 @@ export class Preferences extends React.Component<
       selectedExternalEditor: this.props.selectedExternalEditor,
       availableShells: [],
       selectedShell: this.props.selectedShell,
+      mergeTool: null,
     }
   }
 
@@ -91,9 +101,10 @@ export class Preferences extends React.Component<
     committerName = committerName || ''
     committerEmail = committerEmail || ''
 
-    const [editors, shells] = await Promise.all([
+    const [editors, shells, mergeTool] = await Promise.all([
       getAvailableEditors(),
       getAvailableShells(),
+      getMergeTool(),
     ])
 
     const availableEditors = editors.map(e => e.editor)
@@ -107,6 +118,7 @@ export class Preferences extends React.Component<
       confirmDiscardChanges: this.props.confirmDiscardChanges,
       availableShells,
       availableEditors,
+      mergeTool,
     })
   }
 
@@ -118,12 +130,14 @@ export class Preferences extends React.Component<
         onDismissed={this.props.onDismissed}
         onSubmit={this.onSave}
       >
+        {this.renderDisallowedCharactersError()}
         <TabBar
           onTabClicked={this.onTabClicked}
           selectedIndex={this.state.selectedIndex}
         >
           <span>Accounts</span>
           <span>Git</span>
+          <span>Appearance</span>
           <span>Advanced</span>
         </TabBar>
 
@@ -145,6 +159,29 @@ export class Preferences extends React.Component<
 
   private onLogout = (account: Account) => {
     this.props.dispatcher.removeAccount(account)
+  }
+
+  private disallowedCharacterErrorMessage(name: string, email: string) {
+    const disallowedNameCharacters = disallowedCharacters(name)
+    if (disallowedNameCharacters != null) {
+      return `Git name field cannot be a disallowed character "${disallowedNameCharacters}"`
+    }
+
+    const disallowedEmailCharacters = disallowedCharacters(email)
+    if (disallowedEmailCharacters != null) {
+      return `Git email field cannot be a disallowed character "${disallowedEmailCharacters}"`
+    }
+
+    return null
+  }
+
+  private renderDisallowedCharactersError() {
+    const message = this.state.disallowedCharactersMessage
+    if (message != null) {
+      return <DialogError>{message}</DialogError>
+    } else {
+      return null
+    }
   }
 
   private renderActiveTab() {
@@ -170,6 +207,13 @@ export class Preferences extends React.Component<
           />
         )
       }
+      case PreferencesTab.Appearance:
+        return (
+          <Appearance
+            selectedTheme={this.props.selectedTheme}
+            onSelectedThemeChanged={this.onSelectedThemeChanged}
+          />
+        )
       case PreferencesTab.Advanced: {
         return (
           <Advanced
@@ -187,6 +231,9 @@ export class Preferences extends React.Component<
             availableShells={this.state.availableShells}
             selectedShell={this.state.selectedShell}
             onSelectedShellChanged={this.onSelectedShellChanged}
+            mergeTool={this.state.mergeTool}
+            onMergeToolCommandChanged={this.onMergeToolCommandChanged}
+            onMergeToolNameChanged={this.onMergeToolNameChanged}
           />
         )
       }
@@ -208,11 +255,21 @@ export class Preferences extends React.Component<
   }
 
   private onCommitterNameChanged = (committerName: string) => {
-    this.setState({ committerName })
+    const disallowedCharactersMessage = this.disallowedCharacterErrorMessage(
+      committerName,
+      this.state.committerEmail
+    )
+
+    this.setState({ committerName, disallowedCharactersMessage })
   }
 
   private onCommitterEmailChanged = (committerEmail: string) => {
-    this.setState({ committerEmail })
+    const disallowedCharactersMessage = this.disallowedCharacterErrorMessage(
+      this.state.committerName,
+      committerEmail
+    )
+
+    this.setState({ committerEmail, disallowedCharactersMessage })
   }
 
   private onSelectedEditorChanged = (editor: ExternalEditor) => {
@@ -223,17 +280,26 @@ export class Preferences extends React.Component<
     this.setState({ selectedShell: shell })
   }
 
+  private onSelectedThemeChanged = (theme: ApplicationTheme) => {
+    this.props.dispatcher.setSelectedTheme(theme)
+  }
+
   private renderFooter() {
+    const hasDisabledError = this.state.disallowedCharactersMessage != null
+
     const index = this.state.selectedIndex
     switch (index) {
       case PreferencesTab.Accounts:
+      case PreferencesTab.Appearance:
         return null
       case PreferencesTab.Advanced:
       case PreferencesTab.Git: {
         return (
           <DialogFooter>
             <ButtonGroup>
-              <Button type="submit">Save</Button>
+              <Button type="submit" disabled={hasDisabledError}>
+                Save
+              </Button>
               <Button onClick={this.props.onDismissed}>Cancel</Button>
             </ButtonGroup>
           </DialogFooter>
@@ -262,10 +328,38 @@ export class Preferences extends React.Component<
       this.state.confirmDiscardChanges
     )
 
+    const mergeTool = this.state.mergeTool
+    if (mergeTool && mergeTool.name) {
+      await setGlobalConfigValue('merge.tool', mergeTool.name)
+
+      if (mergeTool.command) {
+        await setGlobalConfigValue(
+          `mergetool.${mergeTool.name}.cmd`,
+          mergeTool.command
+        )
+      }
+    }
+
     this.props.onDismissed()
   }
 
   private onTabClicked = (index: number) => {
     this.setState({ selectedIndex: index })
+  }
+
+  private onMergeToolNameChanged = (name: string) => {
+    const mergeTool = {
+      name,
+      command: this.state.mergeTool && this.state.mergeTool.command,
+    }
+    this.setState({ mergeTool })
+  }
+
+  private onMergeToolCommandChanged = (command: string) => {
+    const mergeTool = {
+      name: this.state.mergeTool ? this.state.mergeTool.name : '',
+      command,
+    }
+    this.setState({ mergeTool })
   }
 }

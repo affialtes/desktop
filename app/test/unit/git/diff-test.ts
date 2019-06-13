@@ -1,10 +1,7 @@
-/* tslint:disable:no-sync-functions */
-
-import * as chai from 'chai'
-const expect = chai.expect
+import { expect } from 'chai'
 
 import * as path from 'path'
-import * as fs from 'fs-extra'
+import * as FSE from 'fs-extra'
 
 import { Repository } from '../../../src/models/repository'
 import {
@@ -21,14 +18,14 @@ import {
 import {
   setupFixtureRepository,
   setupEmptyRepository,
-} from '../../fixture-helper'
+} from '../../helpers/repositories'
 
 import {
-  getStatus,
   getWorkingDirectoryDiff,
   getWorkingDirectoryImage,
   getBlobImage,
 } from '../../../src/lib/git'
+import { getStatusOrThrow } from '../../helpers/status'
 
 import { GitProcess } from 'dugite'
 
@@ -44,8 +41,8 @@ async function getTextDiff(
 describe('git/diff', () => {
   let repository: Repository | null = null
 
-  beforeEach(() => {
-    const testRepoPath = setupFixtureRepository('repo-with-image-changes')
+  beforeEach(async () => {
+    const testRepoPath = await setupFixtureRepository('repo-with-image-changes')
     repository = new Repository(testRepoPath, -1, null, false)
   })
 
@@ -136,7 +133,7 @@ describe('git/diff', () => {
     })
 
     it('changes for text are not set', async () => {
-      const testRepoPath = setupFixtureRepository('repo-with-changes')
+      const testRepoPath = await setupFixtureRepository('repo-with-changes')
       repository = new Repository(testRepoPath, -1, null, false)
 
       const diffSelection = DiffSelection.fromInitialSelection(
@@ -154,8 +151,8 @@ describe('git/diff', () => {
   })
 
   describe('getWorkingDirectoryDiff', () => {
-    beforeEach(() => {
-      const testRepoPath = setupFixtureRepository('repo-with-changes')
+    beforeEach(async () => {
+      const testRepoPath = await setupFixtureRepository('repo-with-changes')
       repository = new Repository(testRepoPath, -1, null, false)
     })
 
@@ -248,7 +245,7 @@ describe('git/diff', () => {
       const repositoryPath = await setupFixtureRepository('diff-rendering-docx')
       const repo = new Repository(repositoryPath, -1, null, false)
 
-      const status = await getStatus(repo)
+      const status = await getStatusOrThrow(repo)
       const files = status.workingDirectory.files
 
       expect(files.length).to.equal(1)
@@ -261,13 +258,13 @@ describe('git/diff', () => {
     it('is empty for a renamed file', async () => {
       const repo = await setupEmptyRepository()
 
-      fs.writeFileSync(path.join(repo.path, 'foo'), 'foo\n')
+      await FSE.writeFile(path.join(repo.path, 'foo'), 'foo\n')
 
       await GitProcess.exec(['add', 'foo'], repo.path)
       await GitProcess.exec(['commit', '-m', 'Initial commit'], repo.path)
       await GitProcess.exec(['mv', 'foo', 'bar'], repo.path)
 
-      const status = await getStatus(repo)
+      const status = await getStatusOrThrow(repo)
       const files = status.workingDirectory.files
 
       expect(files.length).to.equal(1)
@@ -284,15 +281,15 @@ describe('git/diff', () => {
     it('only shows modifications after move for a renamed and modified file', async () => {
       const repo = await setupEmptyRepository()
 
-      fs.writeFileSync(path.join(repo.path, 'foo'), 'foo\n')
+      await FSE.writeFile(path.join(repo.path, 'foo'), 'foo\n')
 
       await GitProcess.exec(['add', 'foo'], repo.path)
       await GitProcess.exec(['commit', '-m', 'Initial commit'], repo.path)
       await GitProcess.exec(['mv', 'foo', 'bar'], repo.path)
 
-      fs.writeFileSync(path.join(repo.path, 'bar'), 'bar\n')
+      await FSE.writeFile(path.join(repo.path, 'bar'), 'bar\n')
 
-      const status = await getStatus(repo)
+      const status = await getStatusOrThrow(repo)
       const files = status.workingDirectory.files
 
       expect(files.length).to.equal(1)
@@ -310,13 +307,16 @@ describe('git/diff', () => {
     it('handles unborn repository with mixed state', async () => {
       const repo = await setupEmptyRepository()
 
-      fs.writeFileSync(path.join(repo.path, 'foo'), 'WRITING THE FIRST LINE\n')
+      await FSE.writeFile(
+        path.join(repo.path, 'foo'),
+        'WRITING THE FIRST LINE\n'
+      )
 
       await GitProcess.exec(['add', 'foo'], repo.path)
 
-      fs.writeFileSync(path.join(repo.path, 'foo'), 'WRITING OVER THE TOP\n')
+      await FSE.writeFile(path.join(repo.path, 'foo'), 'WRITING OVER THE TOP\n')
 
-      const status = await getStatus(repo)
+      const status = await getStatusOrThrow(repo)
       const files = status.workingDirectory.files
 
       expect(files.length).to.equal(1)
@@ -338,7 +338,7 @@ describe('git/diff', () => {
 
       let lineEnding = '\r\n'
 
-      fs.writeFileSync(
+      await FSE.writeFile(
         filePath,
         `WRITING MANY LINES ${lineEnding} USING THIS LINE ENDING ${lineEnding} TO SHOW THAT GIT${lineEnding} WILL INSERT IT WITHOUT CHANGING THING ${lineEnding} HA HA BUSINESS`
       )
@@ -352,12 +352,12 @@ describe('git/diff', () => {
       await GitProcess.exec(['config', 'core.autocrlf', 'true'], repo.path)
       lineEnding = '\n\n'
 
-      fs.writeFileSync(
+      await FSE.writeFile(
         filePath,
         `WRITING MANY LINES ${lineEnding} USING THIS LINE ENDING ${lineEnding} TO SHOW THAT GIT${lineEnding} WILL INSERT IT WITHOUT CHANGING THING ${lineEnding} HA HA BUSINESS`
       )
 
-      const status = await getStatus(repo)
+      const status = await getStatusOrThrow(repo)
       const files = status.workingDirectory.files
 
       expect(files.length).to.equal(1)
@@ -376,9 +376,9 @@ describe('git/diff', () => {
       const filePath = path.join(repo.path, 'foo')
 
       const testString = 'here are some cool characters: • é  漢字'
-      fs.writeFileSync(filePath, testString)
+      await FSE.writeFile(filePath, testString)
 
-      const status = await getStatus(repo)
+      const status = await getStatusOrThrow(repo)
       const files = status.workingDirectory.files
       expect(files.length).to.equal(1)
 

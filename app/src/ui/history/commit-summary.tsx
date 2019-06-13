@@ -4,17 +4,19 @@ import * as classNames from 'classnames'
 import { FileChange } from '../../models/status'
 import { Octicon, OcticonSymbol } from '../octicons'
 import { RichText } from '../lib/rich-text'
-import { IGitHubUser } from '../../lib/dispatcher'
+import { IGitHubUser } from '../../lib/databases'
 import { Repository } from '../../models/repository'
-import { Avatar } from '../lib/avatar'
 import { Commit } from '../../models/commit'
+import { getAvatarUsersForCommit, IAvatarUser } from '../../models/avatar'
+import { AvatarStack } from '../lib/avatar-stack'
+import { CommitAttribution } from '../lib/commit-attribution'
 
 interface ICommitSummaryProps {
   readonly repository: Repository
   readonly commit: Commit
   readonly files: ReadonlyArray<FileChange>
   readonly emoji: Map<string, string>
-  readonly gitHubUser: IGitHubUser | null
+  readonly gitHubUsers: Map<string, IGitHubUser> | null
 
   /**
    * Whether or not the commit body container should
@@ -26,6 +28,10 @@ interface ICommitSummaryProps {
   readonly isExpanded: boolean
 
   readonly onExpandChanged: (isExpanded: boolean) => void
+
+  readonly onDescriptionBottomChanged: (descriptionBottom: Number) => void
+
+  readonly hideDescriptionBorder: boolean
 }
 
 interface ICommitSummaryState {
@@ -49,6 +55,12 @@ interface ICommitSummaryState {
    * conjunction with the isExpanded prop.
    */
   readonly isOverflowed: boolean
+
+  /**
+   * The avatars associated with this commit. Used when rendering
+   * the avatar stack and calculated whenever the commit prop changes.
+   */
+  readonly avatarUsers: ReadonlyArray<IAvatarUser>
 }
 
 const maxSummaryLength = 72
@@ -88,7 +100,13 @@ function createState(isOverflowed: boolean, props: ICommitSummaryProps) {
     summary = `${summary.substr(0, truncateLength)}…`
   }
 
-  return { isOverflowed, summary, body }
+  const avatarUsers = getAvatarUsersForCommit(
+    props.repository.gitHubRepository,
+    props.gitHubUsers,
+    props.commit
+  )
+
+  return { isOverflowed, summary, body, avatarUsers }
 }
 
 /**
@@ -103,9 +121,10 @@ export class CommitSummary extends React.Component<
   ICommitSummaryProps,
   ICommitSummaryState
 > {
-  private descriptionScrollViewRef: HTMLDivElement | null
+  private descriptionScrollViewRef: HTMLDivElement | null = null
   private readonly resizeObserver: ResizeObserver | null = null
   private updateOverflowTimeoutId: number | null = null
+  private descriptionRef: HTMLDivElement | null = null
 
   public constructor(props: ICommitSummaryProps) {
     super(props)
@@ -134,6 +153,12 @@ export class CommitSummary extends React.Component<
   }
 
   private onResized = () => {
+    if (this.descriptionRef) {
+      const descriptionBottom = this.descriptionRef.getBoundingClientRect()
+        .bottom
+      this.props.onDescriptionBottomChanged(descriptionBottom)
+    }
+
     if (this.props.isExpanded) {
       return
     }
@@ -153,6 +178,10 @@ export class CommitSummary extends React.Component<
         this.setState({ isOverflowed: false })
       }
     }
+  }
+
+  private onDescriptionRef = (ref: HTMLDivElement | null) => {
+    this.descriptionRef = ref
   }
 
   private renderExpander() {
@@ -238,7 +267,10 @@ export class CommitSummary extends React.Component<
     }
 
     return (
-      <div className="commit-summary-description-container">
+      <div
+        className="commit-summary-description-container"
+        ref={this.onDescriptionRef}
+      >
         <div
           className="commit-summary-description-scroll-view"
           ref={this.onDescriptionScrollViewRef}
@@ -261,21 +293,12 @@ export class CommitSummary extends React.Component<
     const filesPlural = fileCount === 1 ? 'file' : 'files'
     const filesDescription = `${fileCount} changed ${filesPlural}`
     const shortSHA = this.props.commit.sha.slice(0, 7)
-    const author = this.props.commit.author
-    const authorTitle = `${author.name} <${author.email}>`
-    let avatarUser = undefined
-    if (this.props.gitHubUser) {
-      avatarUser = {
-        email: author.email,
-        name: author.name,
-        avatarURL: this.props.gitHubUser.avatarURL,
-      }
-    }
 
     const className = classNames({
       expanded: this.props.isExpanded,
       collapsed: !this.props.isExpanded,
       'has-expander': this.props.isExpanded || this.state.isOverflowed,
+      'hide-description-border': this.props.hideDescriptionBorder,
     })
 
     return (
@@ -290,22 +313,21 @@ export class CommitSummary extends React.Component<
 
           <ul className="commit-summary-meta">
             <li
-              className="commit-summary-meta-item"
-              title={authorTitle}
+              className="commit-summary-meta-item without-truncation"
               aria-label="Author"
             >
-              <span aria-hidden="true">
-                <Avatar user={avatarUser} />
-              </span>
-
-              {author.name}
+              <AvatarStack users={this.state.avatarUsers} />
+              <CommitAttribution
+                gitHubRepository={this.props.repository.gitHubRepository}
+                commit={this.props.commit}
+              />
             </li>
 
             <li className="commit-summary-meta-item" aria-label="SHA">
               <span aria-hidden="true">
                 <Octicon symbol={OcticonSymbol.gitCommit} />
               </span>
-              <span>{shortSHA}</span>
+              <span className="sha">{shortSHA}</span>
             </li>
 
             <li className="commit-summary-meta-item" title={filesDescription}>

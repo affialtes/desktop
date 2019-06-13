@@ -6,25 +6,9 @@ type Package = {
   devDependencies: PackageLookup
 }
 
-// type declarations for legal-eagle
-type LicenseLookup = {
-  [key: string]: LicenseEntry
+declare namespace NodeJS {
+  // eslint-disable-next-line typescript/interface-name-prefix
+  interface Process extends EventEmitter {
+    on(event: 'unhandledRejection', listener: (error: Error) => void): this
+  }
 }
-
-type LegalEagleOptions = {
-  path: string
-  overrides: LicenseLookup
-  omitPermissive?: boolean
-}
-
-type LicenseEntry = {
-  license: string
-  source: string
-  repository: string
-  sourceText: string
-}
-
-type LegalEagle = (
-  options: LegalEagleOptions,
-  callback: (error: Error | null, summary: LicenseLookup) => void
-) => void

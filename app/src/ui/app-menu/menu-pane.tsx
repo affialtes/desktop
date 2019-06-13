@@ -1,6 +1,7 @@
 import * as React from 'react'
+import * as classNames from 'classnames'
 
-import { List, ClickSource, SelectionSource } from '../list'
+import { List, ClickSource, SelectionSource } from '../lib/list'
 import {
   MenuItem,
   itemIsSelectable,
@@ -9,6 +10,11 @@ import {
 import { MenuListItem } from './menu-list-item'
 
 interface IMenuPaneProps {
+  /**
+   * An optional classname which will be appended to the 'menu-pane' class
+   */
+  readonly className?: string
+
   /**
    * The current Menu pane depth, starts at zero and increments by one for each
    * open submenu.
@@ -75,7 +81,7 @@ interface IMenuPaneProps {
    * show all menu items. This does not affect maximum height, i.e. if the
    * visible menu items takes up more space than what is available the menu
    * will still overflow and be scrollable.
-   * 
+   *
    * @default false
    */
   readonly autoHeight?: boolean
@@ -142,7 +148,7 @@ function createState(props: IMenuPaneProps): IMenuPaneState {
 }
 
 export class MenuPane extends React.Component<IMenuPaneProps, IMenuPaneState> {
-  private list: List
+  private list: List | null = null
 
   public constructor(props: IMenuPaneProps) {
     super(props)
@@ -174,7 +180,7 @@ export class MenuPane extends React.Component<IMenuPaneProps, IMenuPaneState> {
     }
   }
 
-  private onSelectionChanged = (row: number, source: SelectionSource) => {
+  private onSelectedRowChanged = (row: number, source: SelectionSource) => {
     const item = this.state.items[row]
     this.props.onSelectionChanged(this.props.depth, item, source)
   }
@@ -223,7 +229,7 @@ export class MenuPane extends React.Component<IMenuPaneProps, IMenuPaneState> {
     return itemIsSelectable(item)
   }
 
-  private onListRef = (list: List) => {
+  private onListRef = (list: List | null) => {
     this.list = list
   }
 
@@ -256,9 +262,11 @@ export class MenuPane extends React.Component<IMenuPaneProps, IMenuPaneState> {
         ? { height: getListHeight(this.props.items) + 5, maxHeight: '100%' }
         : {}
 
+    const className = classNames('menu-pane', this.props.className)
+
     return (
       <div
-        className="menu-pane"
+        className={className}
         onMouseEnter={this.onMouseEnter}
         onKeyDown={this.onKeyDown}
         style={style}
@@ -268,9 +276,9 @@ export class MenuPane extends React.Component<IMenuPaneProps, IMenuPaneState> {
           rowCount={this.state.items.length}
           rowHeight={this.rowHeight}
           rowRenderer={this.renderMenuItem}
-          selectedRow={this.state.selectedIndex}
+          selectedRows={[this.state.selectedIndex]}
           onRowClick={this.onRowClick}
-          onSelectionChanged={this.onSelectionChanged}
+          onSelectedRowChanged={this.onSelectedRowChanged}
           canSelectRow={this.canSelectRow}
           onRowKeyDown={this.onRowKeyDown}
           invalidationProps={this.state.items}

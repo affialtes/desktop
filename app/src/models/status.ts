@@ -32,12 +32,13 @@ export enum GitStatusEntry {
 
 /** The file status as represented in GitHub Desktop. */
 export enum AppFileStatus {
-  New,
-  Modified,
-  Deleted,
-  Copied,
-  Renamed,
-  Conflicted,
+  New = 'New',
+  Modified = 'Modified',
+  Deleted = 'Deleted',
+  Copied = 'Copied',
+  Renamed = 'Renamed',
+  Conflicted = 'Conflicted',
+  Resolved = 'Resolved',
 }
 
 /** The porcelain status for an ordinary changed entry */
@@ -101,6 +102,8 @@ export function mapStatus(status: AppFileStatus): string {
       return 'Renamed'
     case AppFileStatus.Conflicted:
       return 'Conflicted'
+    case AppFileStatus.Resolved:
+      return 'Resolved'
     case AppFileStatus.Copied:
       return 'Copied'
   }
@@ -126,6 +129,8 @@ export function iconForStatus(status: AppFileStatus): OcticonSymbol {
       return OcticonSymbol.diffRenamed
     case AppFileStatus.Conflicted:
       return OcticonSymbol.alert
+    case AppFileStatus.Resolved:
+      return OcticonSymbol.check
     case AppFileStatus.Copied:
       return OcticonSymbol.diffAdded
   }
@@ -133,43 +138,51 @@ export function iconForStatus(status: AppFileStatus): OcticonSymbol {
   return assertNever(status, `Unknown file status ${status}`)
 }
 
+export type ConflictStatus =
+  | {
+      readonly kind: 'text'
+      readonly conflictMarkerCount: number
+    }
+  | {
+      readonly kind: 'binary'
+    }
+
 /** encapsulate changes to a file associated with a commit */
 export class FileChange {
-  /** the relative path to the file in the repository */
-  public readonly path: string
-
-  /** The original path in the case of a renamed file */
-  public readonly oldPath?: string
-
-  /** the status of the change to the file */
-  public readonly status: AppFileStatus
-
-  public constructor(path: string, status: AppFileStatus, oldPath?: string) {
-    this.path = path
-    this.status = status
-    this.oldPath = oldPath
-  }
-
   /** An ID for the file change. */
-  public get id(): string {
-    return `${this.status}+${this.path}`
+  public readonly id: string
+
+  /**
+   * @param path The relative path to the file in the repository.
+   * @param status The status of the change to the file.
+   * @param oldPath The original path in the case of a renamed file.
+   */
+  public constructor(
+    public readonly path: string,
+    public readonly status: AppFileStatus,
+    public readonly oldPath?: string
+  ) {
+    this.id = `${this.status}+${this.path}`
   }
 }
 
 /** encapsulate the changes to a file in the working directory */
 export class WorkingDirectoryFileChange extends FileChange {
-  /** contains the selection details for this file - all, nothing or partial */
-  public readonly selection: DiffSelection
-
+  /**
+   * @param path The relative path to the file in the repository.
+   * @param status The status of the change to the file.
+   * @param selection Contains the selection details for this file - all, nothing or partial.
+   * @param oldPath The original path in the case of a renamed file.
+   * @param conflictMarkers The number of conflict markers found in this file
+   */
   public constructor(
     path: string,
     status: AppFileStatus,
-    selection: DiffSelection,
-    oldPath?: string
+    public readonly selection: DiffSelection,
+    oldPath?: string,
+    public readonly conflictStatus: ConflictStatus | null = null
   ) {
     super(path, status, oldPath)
-
-    this.selection = selection
   }
 
   /** Create a new WorkingDirectoryFileChange with the given includedness. */
@@ -187,26 +200,37 @@ export class WorkingDirectoryFileChange extends FileChange {
       this.path,
       this.status,
       selection,
-      this.oldPath
+      this.oldPath,
+      this.conflictStatus
     )
+  }
+}
+
+/**
+ * An object encapsulating the changes to a committed file.
+ *
+ * @param status A commit SHA or some other identifier that ultimately
+ *               dereferences to a commit. This is the pointer to the
+ *               'after' version of this change. I.e. the parent of this
+ *               commit will contain the 'before' (or nothing, if the
+ *               file change represents a new file).
+ */
+export class CommittedFileChange extends FileChange {
+  public constructor(
+    path: string,
+    status: AppFileStatus,
+    public readonly commitish: string,
+    oldPath?: string
+  ) {
+    super(path, status, oldPath)
+
+    this.commitish = commitish
   }
 }
 
 /** the state of the working directory for a repository */
 export class WorkingDirectoryStatus {
-  /**
-   * The list of changes in the repository's working directory
-   */
-  public readonly files: ReadonlyArray<WorkingDirectoryFileChange> = new Array<
-    WorkingDirectoryFileChange
-  >()
-
-  /**
-   * Update the include checkbox state of the form
-   * NOTE: we need to track this separately to the file list selection
-   *       and perform two-way binding manually when this changes
-   */
-  public readonly includeAll: boolean | null = true
+  private readonly fileIxById = new Map<string, number>()
 
   /** Create a new status with the given files. */
   public static fromFiles(
@@ -215,12 +239,17 @@ export class WorkingDirectoryStatus {
     return new WorkingDirectoryStatus(files, getIncludeAllState(files))
   }
 
+  /**
+   * @param files The list of changes in the repository's working directory.
+   * @param includeAll Update the include checkbox state of the form.
+   *                   NOTE: we need to track this separately to the file list selection
+   *                         and perform two-way binding manually when this changes.
+   */
   private constructor(
-    files: ReadonlyArray<WorkingDirectoryFileChange>,
-    includeAll: boolean | null
+    public readonly files: ReadonlyArray<WorkingDirectoryFileChange>,
+    public readonly includeAll: boolean | null = true
   ) {
-    this.files = files
-    this.includeAll = includeAll
+    files.forEach((f, ix) => this.fileIxById.set(f.id, ix))
   }
 
   /**
@@ -233,7 +262,14 @@ export class WorkingDirectoryStatus {
 
   /** Find the file with the given ID. */
   public findFileWithID(id: string): WorkingDirectoryFileChange | null {
-    return this.files.find(f => f.id === id) || null
+    const ix = this.fileIxById.get(id)
+    return ix !== undefined ? this.files[ix] || null : null
+  }
+
+  /** Find the index of the file with the given ID. Returns -1 if not found */
+  public findFileIndexByID(id: string): number {
+    const ix = this.fileIxById.get(id)
+    return ix !== undefined ? ix : -1
   }
 }
 

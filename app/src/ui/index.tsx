@@ -9,32 +9,37 @@ import { ipcRenderer, remote } from 'electron'
 import { App } from './app'
 import {
   Dispatcher,
+  gitAuthenticationErrorHandler,
+  externalEditorErrorHandler,
+  openShellErrorHandler,
+  mergeConflictHandler,
+  lfsAttributeMismatchHandler,
+  defaultErrorHandler,
+  missingRepositoryHandler,
+  backgroundTaskHandler,
+  pushNeedsPullHandler,
+  upstreamAlreadyExistsHandler,
+} from '../lib/dispatcher'
+import {
   AppStore,
   GitHubUserStore,
-  GitHubUserDatabase,
   CloningRepositoriesStore,
-  EmojiStore,
-} from '../lib/dispatcher'
+  IssuesStore,
+  SignInStore,
+  RepositoriesStore,
+  TokenStore,
+  AccountsStore,
+  PullRequestStore,
+} from '../lib/stores'
+import { GitHubUserDatabase } from '../lib/databases'
 import { URLActionType } from '../lib/parse-app-url'
 import { SelectionType } from '../lib/app-state'
 import { StatsDatabase, StatsStore } from '../lib/stats'
 import {
   IssuesDatabase,
-  IssuesStore,
-  SignInStore,
-  defaultErrorHandler,
-  missingRepositoryHandler,
-  backgroundTaskHandler,
-  pushNeedsPullHandler,
-  AccountsStore,
   RepositoriesDatabase,
-  RepositoriesStore,
-  TokenStore,
-  gitAuthenticationErrorHandler,
-  externalEditorErrorHandler,
-  openShellErrorHandler,
-  lfsAttributeMismatchHandler,
-} from '../lib/dispatcher'
+  PullRequestDatabase,
+} from '../lib/databases'
 import { shellNeedsPatching, updateEnvironmentForProcess } from '../lib/shell'
 import { installDevGlobals } from './install-globals'
 import { reportUncaughtException, sendErrorReport } from './main-process-proxy'
@@ -44,6 +49,8 @@ import {
   enableSourceMaps,
   withSourceMappedStack,
 } from '../lib/source-map-support'
+import { UiActivityMonitor } from './lib/ui-activity-monitor'
+import { RepositoryStateCache } from '../lib/stores/repository-state-cache'
 
 if (__DEV__) {
   installDevGlobals()
@@ -100,9 +107,11 @@ const gitHubUserStore = new GitHubUserStore(
   new GitHubUserDatabase('GitHubUserDatabase')
 )
 const cloningRepositoriesStore = new CloningRepositoriesStore()
-const emojiStore = new EmojiStore()
 const issuesStore = new IssuesStore(new IssuesDatabase('IssuesDatabase'))
-const statsStore = new StatsStore(new StatsDatabase('StatsDatabase'))
+const statsStore = new StatsStore(
+  new StatsDatabase('StatsDatabase'),
+  new UiActivityMonitor()
+)
 const signInStore = new SignInStore()
 
 const accountsStore = new AccountsStore(localStorage, TokenStore)
@@ -110,22 +119,34 @@ const repositoriesStore = new RepositoriesStore(
   new RepositoriesDatabase('Database')
 )
 
+const pullRequestStore = new PullRequestStore(
+  new PullRequestDatabase('PullRequestDatabase'),
+  repositoriesStore
+)
+
+const repositoryStateManager = new RepositoryStateCache(repo =>
+  gitHubUserStore.getUsersForRepository(repo)
+)
+
 const appStore = new AppStore(
   gitHubUserStore,
   cloningRepositoriesStore,
-  emojiStore,
   issuesStore,
   statsStore,
   signInStore,
   accountsStore,
-  repositoriesStore
+  repositoriesStore,
+  pullRequestStore,
+  repositoryStateManager
 )
 
-const dispatcher = new Dispatcher(appStore)
+const dispatcher = new Dispatcher(appStore, repositoryStateManager, statsStore)
 
 dispatcher.registerErrorHandler(defaultErrorHandler)
+dispatcher.registerErrorHandler(upstreamAlreadyExistsHandler)
 dispatcher.registerErrorHandler(externalEditorErrorHandler)
 dispatcher.registerErrorHandler(openShellErrorHandler)
+dispatcher.registerErrorHandler(mergeConflictHandler)
 dispatcher.registerErrorHandler(lfsAttributeMismatchHandler)
 dispatcher.registerErrorHandler(gitAuthenticationErrorHandler)
 dispatcher.registerErrorHandler(pushNeedsPullHandler)
@@ -137,13 +158,15 @@ document.body.classList.add(`platform-${process.platform}`)
 dispatcher.setAppFocusState(remote.getCurrentWindow().isFocused())
 
 ipcRenderer.on('focus', () => {
-  const state = appStore.getState().selectedState
-  if (!state || state.type !== SelectionType.Repository) {
-    return
+  const { selectedState } = appStore.getState()
+
+  // Refresh the currently selected repository on focus (if
+  // we have a selected repository).
+  if (selectedState && selectedState.type === SelectionType.Repository) {
+    dispatcher.refreshRepository(selectedState.repository)
   }
 
   dispatcher.setAppFocusState(true)
-  dispatcher.refreshRepository(state.repository)
 })
 
 ipcRenderer.on('blur', () => {
@@ -162,6 +185,13 @@ ipcRenderer.on(
 )
 
 ReactDOM.render(
-  <App dispatcher={dispatcher} appStore={appStore} startTime={startTime} />,
+  <App
+    dispatcher={dispatcher}
+    appStore={appStore}
+    repositoryStateManager={repositoryStateManager}
+    issuesStore={issuesStore}
+    gitHubUserStore={gitHubUserStore}
+    startTime={startTime}
+  />,
   document.getElementById('desktop-app-container')!
 )

@@ -2,7 +2,7 @@ import { MenuIDs } from '../main-process/menu'
 import { merge } from './merge'
 import { IAppState, SelectionType } from '../lib/app-state'
 import { Repository } from '../models/repository'
-import { CloningRepository } from './dispatcher'
+import { CloningRepository } from '../models/cloning-repository'
 import { TipState } from '../models/tip'
 import { updateMenuState as ipcUpdateMenuState } from '../ui/main-process-proxy'
 import { AppMenu, MenuItem } from '../models/app-menu'
@@ -15,7 +15,11 @@ export interface IMenuItemState {
  * Utility class for coalescing updates to menu items
  */
 class MenuStateBuilder {
-  private readonly _state = new Map<MenuIDs, IMenuItemState>()
+  private readonly _state: Map<MenuIDs, IMenuItemState>
+
+  public constructor(state: Map<MenuIDs, IMenuItemState> = new Map()) {
+    this._state = state
+  }
 
   /**
    * Returns an Map where each key is a MenuID and the values
@@ -52,6 +56,19 @@ class MenuStateBuilder {
     this.updateMenuItem(id, { enabled })
     return this
   }
+
+  /**
+   * Create a new state builder by merging the current state with the state from
+   * the other state builder. This will replace values in `this` with values
+   * from `other`.
+   */
+  public merge(other: MenuStateBuilder): MenuStateBuilder {
+    const merged = new Map<MenuIDs, IMenuItemState>(this._state)
+    for (const [key, value] of other._state) {
+      merged.set(key, value)
+    }
+    return new MenuStateBuilder(merged)
+  }
 }
 
 function isRepositoryHostedOnGitHub(
@@ -80,7 +97,47 @@ function menuItemStateEqual(state: IMenuItemState, menuItem: MenuItem) {
   return true
 }
 
-function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
+const allMenuIds: ReadonlyArray<MenuIDs> = [
+  'rename-branch',
+  'delete-branch',
+  'preferences',
+  'update-branch',
+  'compare-to-branch',
+  'merge-branch',
+  'view-repository-on-github',
+  'compare-on-github',
+  'open-in-shell',
+  'push',
+  'pull',
+  'branch',
+  'repository',
+  'create-branch',
+  'show-changes',
+  'show-history',
+  'show-repository-list',
+  'show-branches-list',
+  'open-working-directory',
+  'show-repository-settings',
+  'open-external-editor',
+  'remove-repository',
+  'new-repository',
+  'add-local-repository',
+  'clone-repository',
+  'about',
+  'create-pull-request',
+]
+
+function getAllMenusDisabledBuilder(): MenuStateBuilder {
+  const menuStateBuilder = new MenuStateBuilder()
+
+  for (const menuId of allMenuIds) {
+    menuStateBuilder.disable(menuId)
+  }
+
+  return menuStateBuilder
+}
+
+function getRepositoryMenuBuilder(state: IAppState): MenuStateBuilder {
   const selectedState = state.selectedState
   const isHostedOnGitHub = selectedState
     ? isRepositoryHostedOnGitHub(selectedState.repository)
@@ -89,10 +146,12 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
   let repositorySelected = false
   let onNonDefaultBranch = false
   let onBranch = false
+  let onDetachedHead = false
   let hasDefaultBranch = false
   let hasPublishedBranch = false
   let networkActionInProgress = false
   let tipStateIsUnknown = false
+  let branchIsUnborn = false
 
   let hasRemote = false
 
@@ -106,7 +165,9 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
     hasDefaultBranch = Boolean(defaultBranch)
 
     onBranch = tip.kind === TipState.Valid
+    onDetachedHead = tip.kind === TipState.Detached
     tipStateIsUnknown = tip.kind === TipState.Unknown
+    branchIsUnborn = tip.kind === TipState.Unborn
 
     // If we are:
     //  1. on the default branch, or
@@ -138,11 +199,11 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
     'open-in-shell',
     'open-working-directory',
     'show-repository-settings',
-    'create-branch',
     'show-changes',
     'show-history',
     'show-branches-list',
     'open-external-editor',
+    'compare-to-branch',
   ]
 
   const menuStateBuilder = new MenuStateBuilder()
@@ -156,26 +217,43 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
       menuStateBuilder.enable(id)
     }
 
-    menuStateBuilder.setEnabled('rename-branch', onNonDefaultBranch)
-    menuStateBuilder.setEnabled('delete-branch', onNonDefaultBranch)
+    menuStateBuilder.setEnabled(
+      'rename-branch',
+      onNonDefaultBranch && !branchIsUnborn && !onDetachedHead
+    )
+    menuStateBuilder.setEnabled(
+      'delete-branch',
+      onNonDefaultBranch && !branchIsUnborn && !onDetachedHead
+    )
     menuStateBuilder.setEnabled(
       'update-branch',
-      onNonDefaultBranch && hasDefaultBranch
+      onNonDefaultBranch && hasDefaultBranch && !onDetachedHead
     )
     menuStateBuilder.setEnabled('merge-branch', onBranch)
     menuStateBuilder.setEnabled(
-      'compare-branch',
+      'compare-on-github',
       isHostedOnGitHub && hasPublishedBranch
     )
 
     menuStateBuilder.setEnabled('view-repository-on-github', isHostedOnGitHub)
-    menuStateBuilder.setEnabled('create-pull-request', isHostedOnGitHub)
-    menuStateBuilder.setEnabled('push', hasRemote && !networkActionInProgress)
+    menuStateBuilder.setEnabled(
+      'create-pull-request',
+      isHostedOnGitHub && !branchIsUnborn && !onDetachedHead
+    )
+    menuStateBuilder.setEnabled(
+      'push',
+      hasRemote && !branchIsUnborn && !networkActionInProgress
+    )
     menuStateBuilder.setEnabled(
       'pull',
       hasPublishedBranch && !networkActionInProgress
     )
-    menuStateBuilder.setEnabled('create-branch', !tipStateIsUnknown)
+    menuStateBuilder.setEnabled(
+      'create-branch',
+      !tipStateIsUnknown && !branchIsUnborn
+    )
+
+    menuStateBuilder.setEnabled('compare-to-branch', !onDetachedHead)
 
     if (
       selectedState &&
@@ -201,16 +279,38 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
       menuStateBuilder.enable('remove-repository')
     }
 
+    menuStateBuilder.disable('create-branch')
     menuStateBuilder.disable('rename-branch')
     menuStateBuilder.disable('delete-branch')
     menuStateBuilder.disable('update-branch')
     menuStateBuilder.disable('merge-branch')
-    menuStateBuilder.disable('compare-branch')
 
     menuStateBuilder.disable('push')
     menuStateBuilder.disable('pull')
+    menuStateBuilder.disable('compare-to-branch')
+  }
+  return menuStateBuilder
+}
+
+function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
+  if (state.currentPopup) {
+    return getAllMenusDisabledBuilder().state
   }
 
+  return getAllMenusEnabledBuilder()
+    .merge(getRepositoryMenuBuilder(state))
+    .merge(getInWelcomeFlowBuilder(state.showWelcomeFlow)).state
+}
+
+function getAllMenusEnabledBuilder(): MenuStateBuilder {
+  const menuStateBuilder = new MenuStateBuilder()
+  for (const menuId of allMenuIds) {
+    menuStateBuilder.enable(menuId)
+  }
+  return menuStateBuilder
+}
+
+function getInWelcomeFlowBuilder(inWelcomeFlow: boolean): MenuStateBuilder {
   const welcomeScopedIds: ReadonlyArray<MenuIDs> = [
     'new-repository',
     'add-local-repository',
@@ -219,6 +319,7 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
     'about',
   ]
 
+  const menuStateBuilder = new MenuStateBuilder()
   if (inWelcomeFlow) {
     for (const id of welcomeScopedIds) {
       menuStateBuilder.disable(id)
@@ -229,7 +330,7 @@ function getMenuState(state: IAppState): Map<MenuIDs, IMenuItemState> {
     }
   }
 
-  return menuStateBuilder.state
+  return menuStateBuilder
 }
 
 /**

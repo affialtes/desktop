@@ -3,14 +3,11 @@ import * as React from 'react'
 
 import { ChangesList } from './changes-list'
 import { DiffSelectionType } from '../../models/diff'
-import { IChangesState, PopupType } from '../../lib/app-state'
+import { IChangesState } from '../../lib/app-state'
 import { Repository } from '../../models/repository'
-import {
-  Dispatcher,
-  IGitHubUser,
-  IssuesStore,
-  GitHubUserStore,
-} from '../../lib/dispatcher'
+import { Dispatcher } from '../../lib/dispatcher'
+import { IGitHubUser } from '../../lib/databases'
+import { IssuesStore, GitHubUserStore } from '../../lib/stores'
 import { CommitIdentity } from '../../models/commit-identity'
 import { Commit } from '../../models/commit'
 import { UndoCommit } from './undo-commit'
@@ -20,11 +17,13 @@ import {
   IssuesAutocompletionProvider,
   UserAutocompletionProvider,
 } from '../autocompletion'
-import { ICommitMessage } from '../../lib/app-state'
-import { ClickSource } from '../list'
+import { ClickSource } from '../lib/list'
 import { WorkingDirectoryFileChange } from '../../models/status'
 import { CSSTransitionGroup } from 'react-transition-group'
 import { openFile } from '../../lib/open-file'
+import { ITrailer } from '../../lib/git/interpret-trailers'
+import { Account } from '../../models/account'
+import { PopupType } from '../../models/popup'
 
 /**
  * The timeout for the animation of the enter/leave animation for Undo.
@@ -50,12 +49,22 @@ interface IChangesSidebarProps {
   readonly gitHubUserStore: GitHubUserStore
   readonly isIndexLocked: boolean
   readonly askForConfirmationOnDiscardChanges: boolean
+  readonly accounts: ReadonlyArray<Account>
+  /** The name of the currently selected external editor */
+  readonly externalEditorLabel?: string
+
+  /**
+   * Callback to open a selected file using the configured external editor
+   *
+   * @param fullPath The full path to the file on disk
+   */
+  readonly onOpenInExternalEditor: (fullPath: string) => void
 }
 
 export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
   private autocompletionProviders: ReadonlyArray<
     IAutocompletionProvider<any>
-  > | null
+  > | null = null
 
   public constructor(props: IChangesSidebarProps) {
     super(props)
@@ -69,11 +78,13 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
 
   private receiveProps(props: IChangesSidebarProps) {
     if (
-      props.repository.id !== this.props.repository.id ||
-      !this.autocompletionProviders
+      this.autocompletionProviders === null ||
+      this.props.emoji.size === 0 ||
+      props.repository.hash !== this.props.repository.hash ||
+      props.accounts !== this.props.accounts
     ) {
       const autocompletionProviders: IAutocompletionProvider<any>[] = [
-        new EmojiAutocompletionProvider(this.props.emoji),
+        new EmojiAutocompletionProvider(props.emoji),
       ]
 
       // Issues autocompletion is only available for GitHub repositories.
@@ -86,10 +97,16 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
             props.dispatcher
           )
         )
+
+        const account = this.props.accounts.find(
+          a => a.endpoint === gitHubRepository.endpoint
+        )
+
         autocompletionProviders.push(
           new UserAutocompletionProvider(
             props.gitHubUserStore,
-            gitHubRepository
+            gitHubRepository,
+            account
           )
         )
       }
@@ -98,16 +115,22 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
     }
   }
 
-  private onCreateCommit = (message: ICommitMessage): Promise<boolean> => {
+  private onCreateCommit = (
+    summary: string,
+    description: string | null,
+    trailers?: ReadonlyArray<ITrailer>
+  ): Promise<boolean> => {
     return this.props.dispatcher.commitIncludedChanges(
       this.props.repository,
-      message
+      summary,
+      description,
+      trailers
     )
   }
 
-  private onFileSelectionChanged = (row: number) => {
-    const file = this.props.changes.workingDirectory.files[row]
-    this.props.dispatcher.changeChangesSelection(this.props.repository, file)
+  private onFileSelectionChanged = (rows: ReadonlyArray<number>) => {
+    const files = rows.map(i => this.props.changes.workingDirectory.files[i])
+    this.props.dispatcher.changeChangesSelection(this.props.repository, files)
   }
 
   private onIncludeChanged = (path: string, include: boolean) => {
@@ -148,29 +171,20 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
   }
 
   private onDiscardAllChanges = (
-    files: ReadonlyArray<WorkingDirectoryFileChange>
+    files: ReadonlyArray<WorkingDirectoryFileChange>,
+    isDiscardingAllChanges: boolean = true
   ) => {
-    if (!this.props.askForConfirmationOnDiscardChanges) {
-      this.props.dispatcher.discardChanges(this.props.repository, files)
-    } else {
-      this.props.dispatcher.showPopup({
-        type: PopupType.ConfirmDiscardChanges,
-        repository: this.props.repository,
-        files,
-      })
-    }
+    this.props.dispatcher.showPopup({
+      type: PopupType.ConfirmDiscardChanges,
+      repository: this.props.repository,
+      showDiscardChangesSetting: false,
+      discardingAllChanges: isDiscardingAllChanges,
+      files,
+    })
   }
 
-  private onIgnore = (pattern: string) => {
-    this.props.dispatcher.ignore(this.props.repository, pattern)
-  }
-
-  /**
-   * Reveals a file from a repository in the native file manager.
-   * @param path The path of the file relative to the root of the repository
-   */
-  private onRevealInFileManager = (path: string) => {
-    this.props.dispatcher.revealInFileManager(this.props.repository, path)
+  private onIgnore = (pattern: string | string[]) => {
+    this.props.dispatcher.appendIgnoreRule(this.props.repository, pattern)
   }
 
   /**
@@ -210,11 +224,18 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
    * Handles click events from the List item container, note that this is
    * Not the same thing as the element returned by the row renderer in ChangesList
    */
-  private onChangedItemClick = (row: number, source: ClickSource) => {
+  private onChangedItemClick = (
+    rows: number | number[],
+    source: ClickSource
+  ) => {
     // Toggle selection when user presses the spacebar or enter while focused
-    // on a list item
+    // on a list item or on the list's container
     if (source.kind === 'keyboard') {
-      this.onToggleInclude(row)
+      if (rows instanceof Array) {
+        rows.forEach(row => this.onToggleInclude(row))
+      } else {
+        this.onToggleInclude(rows)
+      }
     }
   }
 
@@ -255,7 +276,7 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
 
   public render() {
     const changesState = this.props.changes
-    const selectedFileID = changesState.selectedFileID
+    const selectedFileIDs = changesState.selectedFileIDs
 
     // TODO: I think user will expect the avatar to match that which
     // they have configured in GitHub.com as well as GHE so when we add
@@ -273,26 +294,34 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
           dispatcher={this.props.dispatcher}
           repository={this.props.repository}
           workingDirectory={changesState.workingDirectory}
-          selectedFileID={selectedFileID}
+          selectedFileIDs={selectedFileIDs}
           onFileSelectionChanged={this.onFileSelectionChanged}
           onCreateCommit={this.onCreateCommit}
           onIncludeChanged={this.onIncludeChanged}
           onSelectAll={this.onSelectAll}
           onDiscardChanges={this.onDiscardChanges}
+          askForConfirmationOnDiscardChanges={
+            this.props.askForConfirmationOnDiscardChanges
+          }
           onDiscardAllChanges={this.onDiscardAllChanges}
-          onRevealInFileManager={this.onRevealInFileManager}
           onOpenItem={this.onOpenItem}
           onRowClick={this.onChangedItemClick}
           commitAuthor={this.props.commitAuthor}
           branch={this.props.branch}
           gitHubUser={user}
           commitMessage={this.props.changes.commitMessage}
-          contextualCommitMessage={this.props.changes.contextualCommitMessage}
           autocompletionProviders={this.autocompletionProviders!}
           availableWidth={this.props.availableWidth}
           onIgnore={this.onIgnore}
           isCommitting={this.props.isCommitting}
+<<<<<<< HEAD
           isIndexLocked={this.props.isIndexLocked}
+=======
+          showCoAuthoredBy={this.props.changes.showCoAuthoredBy}
+          coAuthors={this.props.changes.coAuthors}
+          externalEditorLabel={this.props.externalEditorLabel}
+          onOpenInExternalEditor={this.props.onOpenInExternalEditor}
+>>>>>>> __release-test-b28c4b8-104408793
         />
         {this.renderMostRecentLocalCommit()}
       </div>

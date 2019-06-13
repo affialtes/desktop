@@ -5,13 +5,10 @@ import {
   GitError,
 } from './core'
 import { Repository } from '../../models/repository'
+import { IPushProgress } from '../../models/progress'
+import { IGitAccount } from '../../models/git-account'
 import { PushProgressParser, executionOptionsWithProgress } from '../progress'
-import { IPushProgress } from '../app-state'
-import {
-  IGitAccount,
-  envForAuthentication,
-  AuthenticationErrors,
-} from './authentication'
+import { envForAuthentication, AuthenticationErrors } from './authentication'
 
 /**
  * Push from the remote to the branch, optionally setting the upstream.
@@ -64,8 +61,8 @@ export async function push(
     const title = `Pushing to ${remote}`
     const kind = 'push'
 
-    opts = executionOptionsWithProgress(
-      opts,
+    opts = await executionOptionsWithProgress(
+      { ...opts, trackLFSProgress: true },
       new PushProgressParser(),
       progress => {
         const description =

@@ -1,10 +1,12 @@
 import { Menu, ipcMain, shell, app } from 'electron'
 import { ensureItemIds } from './ensure-item-ids'
 import { MenuEvent } from './menu-event'
-import { getLogPath } from '../../lib/logging/get-log-path'
-import { mkdirIfNeeded } from '../../lib/file-system'
+import { truncateWithEllipsis } from '../../lib/truncate-with-ellipsis'
+import { getLogDirectoryPath } from '../../lib/logging/get-log-path'
+import { ensureDir } from 'fs-extra'
 
 import { log } from '../log'
+import { openDirectorySafe } from '../shell'
 
 const defaultEditorLabel = __DARWIN__
   ? 'Open in External Editor'
@@ -12,11 +14,28 @@ const defaultEditorLabel = __DARWIN__
 const defaultShellLabel = __DARWIN__
   ? 'Open in Terminal'
   : 'Open in Command Prompt'
+const defaultPullRequestLabel = __DARWIN__
+  ? 'Create Pull Request'
+  : 'Create &pull request'
+const defaultBranchNameDefaultValue = __DARWIN__
+  ? 'Default Branch'
+  : 'default branch'
 
-export function buildDefaultMenu(
-  editorLabel: string = defaultEditorLabel,
-  shellLabel: string = defaultShellLabel
-): Electron.Menu {
+export type MenuLabels = {
+  editorLabel?: string
+  shellLabel?: string
+  pullRequestLabel?: string
+  defaultBranchName?: string
+}
+
+export function buildDefaultMenu({
+  editorLabel = defaultEditorLabel,
+  shellLabel = defaultShellLabel,
+  pullRequestLabel = defaultPullRequestLabel,
+  defaultBranchName = defaultBranchNameDefaultValue,
+}: MenuLabels): Electron.Menu {
+  defaultBranchName = truncateWithEllipsis(defaultBranchName, 25)
+
   const template = new Array<Electron.MenuItemConstructorOptions>()
   const separator: Electron.MenuItemConstructorOptions = { type: 'separator' }
 
@@ -109,7 +128,11 @@ export function buildDefaultMenu(
       { role: 'cut', label: __DARWIN__ ? 'Cut' : 'Cu&t' },
       { role: 'copy', label: __DARWIN__ ? 'Copy' : '&Copy' },
       { role: 'paste', label: __DARWIN__ ? 'Paste' : '&Paste' },
-      { role: 'selectall', label: __DARWIN__ ? 'Select All' : 'Select &all' },
+      {
+        label: __DARWIN__ ? 'Select All' : 'Select &all',
+        accelerator: 'CmdOrCtrl+A',
+        click: emit('select-all'),
+      },
     ],
   })
 
@@ -120,13 +143,13 @@ export function buildDefaultMenu(
         label: __DARWIN__ ? 'Show Changes' : '&Changes',
         id: 'show-changes',
         accelerator: 'CmdOrCtrl+1',
-        click: emit('select-changes'),
+        click: emit('show-changes'),
       },
       {
         label: __DARWIN__ ? 'Show History' : '&History',
         id: 'show-history',
         accelerator: 'CmdOrCtrl+2',
-        click: emit('select-history'),
+        click: emit('show-history'),
       },
       {
         label: __DARWIN__ ? 'Show Repository List' : 'Repository &list',
@@ -168,8 +191,7 @@ export function buildDefaultMenu(
         // Ctrl+Alt is interpreted as AltGr on international keyboards and this
         // can clash with other shortcuts. We should always use Ctrl+Shift for
         // chorded shortcuts, but this menu item is not a user-facing feature
-        // so we are going to keep this one around and save Ctrl+Shift+R for
-        // a different shortcut in the future...
+        // so we are going to keep this one around.
         accelerator: 'CmdOrCtrl+Alt+R',
         click(item: any, focusedWindow: Electron.BrowserWindow) {
           if (focusedWindow) {
@@ -214,6 +236,7 @@ export function buildDefaultMenu(
       {
         label: __DARWIN__ ? 'Remove' : '&Remove',
         id: 'remove-repository',
+        accelerator: 'CmdOrCtrl+Delete',
         click: emit('remove-repository'),
       },
       separator,
@@ -263,40 +286,50 @@ export function buildDefaultMenu(
       {
         label: __DARWIN__ ? 'Rename…' : '&Rename…',
         id: 'rename-branch',
+        accelerator: 'CmdOrCtrl+Shift+R',
         click: emit('rename-branch'),
       },
       {
         label: __DARWIN__ ? 'Delete…' : '&Delete…',
         id: 'delete-branch',
+        accelerator: 'CmdOrCtrl+Shift+D',
         click: emit('delete-branch'),
       },
       separator,
       {
         label: __DARWIN__
-          ? 'Update From Default Branch'
-          : '&Update from default branch',
+          ? `Update From ${defaultBranchName}`
+          : `&Update from ${defaultBranchName}`,
         id: 'update-branch',
+        accelerator: 'CmdOrCtrl+Shift+U',
         click: emit('update-branch'),
+      },
+      {
+        label: __DARWIN__ ? 'Compare to Branch' : '&Compare to branch',
+        id: 'compare-to-branch',
+        accelerator: 'CmdOrCtrl+Shift+B',
+        click: emit('compare-to-branch'),
       },
       {
         label: __DARWIN__
           ? 'Merge Into Current Branch…'
           : '&Merge into current branch…',
         id: 'merge-branch',
+        accelerator: 'CmdOrCtrl+Shift+M',
         click: emit('merge-branch'),
       },
       separator,
       {
-        label: __DARWIN__ ? 'Compare on GitHub' : '&Compare on GitHub',
-        id: 'compare-branch',
+        label: __DARWIN__ ? 'Compare on GitHub' : 'Compare on &GitHub',
+        id: 'compare-on-github',
         accelerator: 'CmdOrCtrl+Shift+C',
-        click: emit('compare-branch'),
+        click: emit('compare-on-github'),
       },
       {
-        label: __DARWIN__ ? 'Create Pull Request' : 'Create &pull request',
+        label: pullRequestLabel,
         id: 'create-pull-request',
         accelerator: 'CmdOrCtrl+R',
-        click: emit('create-pull-request'),
+        click: emit('open-pull-request'),
       },
     ],
   })
@@ -317,7 +350,7 @@ export function buildDefaultMenu(
   const submitIssueItem: Electron.MenuItemConstructorOptions = {
     label: __DARWIN__ ? 'Report Issue…' : 'Report issue…',
     click() {
-      shell.openExternal('https://github.com/desktop/desktop/issues/new')
+      shell.openExternal('https://github.com/desktop/desktop/issues/new/choose')
     },
   }
 
@@ -333,17 +366,23 @@ export function buildDefaultMenu(
   const showUserGuides: Electron.MenuItemConstructorOptions = {
     label: 'Show User Guides',
     click() {
-      shell.openExternal('https://help.github.com/desktop-beta/guides/')
+      shell.openExternal('https://help.github.com/desktop/guides/')
     },
   }
 
+  const showLogsLabel = __DARWIN__
+    ? 'Show Logs in Finder'
+    : __WIN32__
+      ? 'S&how logs in Explorer'
+      : 'S&how logs in your File Manager'
+
   const showLogsItem: Electron.MenuItemConstructorOptions = {
-    label: __DARWIN__ ? 'Show Logs in Finder' : 'S&how logs in Explorer',
+    label: showLogsLabel,
     click() {
-      const logPath = getLogPath()
-      mkdirIfNeeded(logPath)
+      const logPath = getLogDirectoryPath()
+      ensureDir(logPath)
         .then(() => {
-          shell.showItemInFolder(logPath)
+          openDirectorySafe(logPath)
         })
         .catch(err => {
           log('error', err.message)

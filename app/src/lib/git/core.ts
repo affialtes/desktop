@@ -26,6 +26,9 @@ export interface IGitExecutionOptions extends DugiteExecutionOptions {
    * be logged and an error thrown.
    */
   readonly expectedErrors?: ReadonlySet<DugiteError>
+
+  /** Should it track & report LFS progress? */
+  readonly trackLFSProgress?: boolean
 }
 
 /**
@@ -78,17 +81,17 @@ export class GitError extends Error {
 /**
  * Shell out to git with the given arguments, at the given path.
  *
- * @param {args}             The arguments to pass to `git`.
+ * @param args             The arguments to pass to `git`.
  *
- * @param {path}             The working directory path for the execution of the
- *                           command.
+ * @param path             The working directory path for the execution of the
+ *                         command.
  *
- * @param {name}             The name for the command based on its caller's
- *                           context. This will be used for performance
- *                           measurements and debugging.
+ * @param name             The name for the command based on its caller's
+ *                         context. This will be used for performance
+ *                         measurements and debugging.
  *
- * @param {options}          Configuration options for the execution of git,
- *                           see IGitExecutionOptions for more information.
+ * @param options          Configuration options for the execution of git,
+ *                         see IGitExecutionOptions for more information.
  *
  * Returns the result. If the command exits with a code not in
  * `successExitCodes` or an error not in `expectedErrors`, a `GitError` will be
@@ -107,22 +110,11 @@ export async function git(
 
   const opts = { ...defaultOptions, ...options }
 
-  const startTime = performance && performance.now ? performance.now() : null
-
   const commandName = `${name}: git ${args.join(' ')}`
-  log.debug(`Executing ${commandName}`)
 
   const result = await GitPerf.measure(commandName, () =>
     GitProcess.exec(args, path, options)
   )
-
-  if (startTime) {
-    const rawTime = performance.now() - startTime
-    if (rawTime > 1000) {
-      const timeInSeconds = (rawTime / 1000).toFixed(3)
-      log.info(`Executing ${commandName} (took ${timeInSeconds}s)`)
-    }
-  }
 
   const exitCode = result.exitCode
 
@@ -181,9 +173,9 @@ function getDescriptionForError(error: DugiteError): string {
     case DugiteError.SSHAuthenticationFailed:
     case DugiteError.SSHPermissionDenied:
     case DugiteError.HTTPSAuthenticationFailed:
-      return `Authentication failed. You may not have permission to access the repository. Open ${__DARWIN__
-        ? 'preferences'
-        : 'options'} and verify that you're signed in with an account that has permission to access this repository.`
+      return `Authentication failed. You may not have permission to access the repository or the repository may have been archived. Open ${
+        __DARWIN__ ? 'preferences' : 'options'
+      } and verify that you're signed in with an account that has permission to access this repository.`
     case DugiteError.RemoteDisconnection:
       return 'The remote disconnected. Check your Internet connection and try again.'
     case DugiteError.HostDown:
@@ -249,6 +241,22 @@ function getDescriptionForError(error: DugiteError): string {
       return 'Cannot push these commits as they contain an email address marked as private on GitHub.'
     case DugiteError.LFSAttributeDoesNotMatch:
       return 'Git LFS attribute found in global Git configuration does not match expected value.'
+    case DugiteError.ProtectedBranchDeleteRejected:
+      return 'This branch cannot be deleted from the remote repository because it is marked as protected.'
+    case DugiteError.ProtectedBranchRequiredStatus:
+      return 'The push was rejected by the remote server because a required status check has not been satisfied.'
+    case DugiteError.BranchRenameFailed:
+      return 'The branch could not be renamed.'
+    case DugiteError.PathDoesNotExist:
+      return 'The path does not exist on disk.'
+    case DugiteError.InvalidObjectName:
+      return 'The object was not found in the Git repository.'
+    case DugiteError.OutsideRepository:
+      return 'This path is not a valid path inside the repository.'
+    case DugiteError.LockFileAlreadyExists:
+      return 'A lock file already exists in the repository, which blocks this operation from completing.'
+    case DugiteError.NoMergeToAbort:
+      return 'There is no merge in progress, so there is nothing to abort.'
     default:
       return assertNever(error, `Unknown error: ${error}`)
   }

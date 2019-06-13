@@ -1,14 +1,20 @@
 import * as React from 'react'
 import * as classnames from 'classnames'
 
-import { List, SelectionSource as ListSelectionSource } from '../list'
+import {
+  List,
+  SelectionSource as ListSelectionSource,
+  findNextSelectableRow,
+} from '../lib/list'
 import { TextBox } from '../lib/text-box'
 import { Row } from '../lib/row'
+
+import { match, IMatch, IMatches } from '../../lib/fuzzy-find'
 
 /** An item in the filter list. */
 export interface IFilterListItem {
   /** The text which represents the item. This is used for filtering. */
-  readonly text: string
+  readonly text: ReadonlyArray<string>
 
   /** A unique identifier for the item. */
   readonly id: string
@@ -31,6 +37,8 @@ interface IFlattenedGroup {
 interface IFlattenedItem<T extends IFilterListItem> {
   readonly kind: 'item'
   readonly item: T
+  /** Array of indexes in `item.text` that should be highlighted */
+  readonly matches: IMatches
 }
 
 /**
@@ -55,10 +63,10 @@ interface IFilterListProps<T extends IFilterListItem> {
   readonly selectedItem: T | null
 
   /** Called to render each visible item. */
-  readonly renderItem: (item: T) => JSX.Element | null
+  readonly renderItem: (item: T, matches: IMatches) => JSX.Element | null
 
   /** Called to render header for the group with the given identifier. */
-  readonly renderGroupHeader: (identifier: string) => JSX.Element | null
+  readonly renderGroupHeader?: (identifier: string) => JSX.Element | null
 
   /** Called to render content before/above the filter and list. */
   readonly renderPreList?: () => JSX.Element | null
@@ -91,18 +99,42 @@ interface IFilterListProps<T extends IFilterListItem> {
   ) => void
 
   /** The current filter text to use in the form */
-  readonly filterText: string
+  readonly filterText?: string
 
   /** Called when the filter text is changed by the user */
-  readonly onFilterTextChanged: (text: string) => void
+  readonly onFilterTextChanged?: (text: string) => void
+
+  /**
+   * Whether or not the filter list should allow selection
+   * and filtering. Defaults to false.
+   */
+  readonly disabled?: boolean
 
   /** Any props which should cause a re-render if they change. */
   readonly invalidationProps: any
+
+  /** Called to render content after the filter. */
+  readonly renderPostFilter?: () => JSX.Element | null
+
+  /** Called when there are no items to render.  */
+  readonly renderNoItems?: () => JSX.Element | null
+
+  /**
+   * A reference to a TextBox that will be used to control this component.
+   *
+   * See https://github.com/desktop/desktop/issues/4317 for refactoring work to
+   * make this more composable which should make this unnecessary.
+   */
+  readonly filterTextBox?: TextBox
+
+  /**
+   * Callback to fire when the items in the filter list are updated
+   */
+  readonly onFilterListResultsChanged?: (resultCount: number) => void
 }
 
 interface IFilterListState<T extends IFilterListItem> {
   readonly rows: ReadonlyArray<IFilterListRow<T>>
-
   readonly selectedRow: number
 }
 
@@ -125,7 +157,7 @@ export class FilterList<T extends IFilterListItem> extends React.Component<
   IFilterListState<T>
 > {
   private list: List | null = null
-  private filterInput: HTMLInputElement | null = null
+  private filterTextBox: TextBox | null = null
 
   public constructor(props: IFilterListProps<T>) {
     super(props)
@@ -133,84 +165,14 @@ export class FilterList<T extends IFilterListItem> extends React.Component<
     this.state = createStateUpdate(props)
   }
 
-  public render() {
-    return (
-      <div className={classnames('filter-list', this.props.className)}>
-        {this.props.renderPreList ? this.props.renderPreList() : null}
-
-        <Row className="filter-field-row">
-          <TextBox
-            type="search"
-            autoFocus={true}
-            placeholder="Filter"
-            className="filter-list-filter-field"
-            onChange={this.onFilterChanged}
-            onKeyDown={this.onKeyDown}
-            onInputRef={this.onInputRef}
-            value={this.props.filterText}
-          />
-        </Row>
-
-        <div className="filter-list-container">
-          <List
-            rowCount={this.state.rows.length}
-            rowRenderer={this.renderRow}
-            rowHeight={this.props.rowHeight}
-            selectedRow={this.state.selectedRow}
-            onSelectionChanged={this.onSelectionChanged}
-            onRowClick={this.onRowClick}
-            onRowKeyDown={this.onRowKeyDown}
-            canSelectRow={this.canSelectRow}
-            ref={this.onListRef}
-            invalidationProps={{
-              ...this.props,
-              ...this.props.invalidationProps,
-            }}
-          />
-        </div>
-      </div>
-    )
+  public componentWillMount() {
+    if (this.props.filterTextBox !== undefined) {
+      this.filterTextBox = this.props.filterTextBox
+    }
   }
 
   public componentWillReceiveProps(nextProps: IFilterListProps<T>) {
     this.setState(createStateUpdate(nextProps))
-  }
-
-  private onSelectionChanged = (index: number, source: SelectionSource) => {
-    this.setState({ selectedRow: index })
-
-    if (this.props.onSelectionChanged) {
-      const row = this.state.rows[index]
-      if (row.kind === 'item') {
-        this.props.onSelectionChanged(row.item, source)
-      }
-    }
-  }
-
-  private renderRow = (index: number) => {
-    const row = this.state.rows[index]
-    if (row.kind === 'item') {
-      return this.props.renderItem(row.item)
-    } else {
-      return this.props.renderGroupHeader(row.identifier)
-    }
-  }
-
-  private onListRef = (instance: List | null) => {
-    this.list = instance
-  }
-
-  private onInputRef = (instance: HTMLInputElement | null) => {
-    this.filterInput = instance
-
-    if (this.filterInput && this.props.filterText.length > 0) {
-      this.filterInput.select()
-    }
-  }
-
-  private onFilterChanged = (event: React.FormEvent<HTMLInputElement>) => {
-    const text = event.currentTarget.value
-    this.props.onFilterTextChanged(text)
   }
 
   public componentDidUpdate(
@@ -239,14 +201,145 @@ export class FilterList<T extends IFilterListItem> extends React.Component<
           )
           this.props.onSelectionChanged(newSelectedItem, {
             kind: 'filter',
-            filterText: this.props.filterText,
+            filterText: this.props.filterText || '',
           })
         }
+      }
+    }
+
+    if (this.props.onFilterListResultsChanged !== undefined) {
+      const itemCount = this.state.rows.filter(row => row.kind === 'item')
+        .length
+
+      this.props.onFilterListResultsChanged(itemCount)
+    }
+  }
+
+  public componentDidMount() {
+    if (this.filterTextBox !== null) {
+      this.filterTextBox.selectAll()
+    }
+  }
+
+  public renderTextBox() {
+    return (
+      <TextBox
+        ref={this.onTextBoxRef}
+        type="search"
+        autoFocus={true}
+        placeholder="Filter"
+        className="filter-list-filter-field"
+        onValueChanged={this.onFilterValueChanged}
+        onKeyDown={this.onKeyDown}
+        value={this.props.filterText}
+        disabled={this.props.disabled}
+      />
+    )
+  }
+
+  public render() {
+    return (
+      <div className={classnames('filter-list', this.props.className)}>
+        {this.props.renderPreList ? this.props.renderPreList() : null}
+
+        <Row className="filter-field-row">
+          {this.props.filterTextBox === undefined ? this.renderTextBox() : null}
+          {this.props.renderPostFilter ? this.props.renderPostFilter() : null}
+        </Row>
+
+        <div className="filter-list-container">{this.renderContent()}</div>
+      </div>
+    )
+  }
+
+  public selectFirstItem(focus: boolean = false) {
+    if (this.list === null) {
+      return
+    }
+
+    const next = findNextSelectableRow(
+      this.state.rows.length,
+      {
+        direction: 'down',
+        row: -1,
+      },
+      this.canSelectRow
+    )
+
+    if (next !== null) {
+      this.setState({ selectedRow: next }, () => {
+        if (focus && this.list !== null) {
+          this.list.focus()
+        }
+      })
+    }
+  }
+
+  private renderContent() {
+    if (this.state.rows.length === 0 && this.props.renderNoItems) {
+      return this.props.renderNoItems()
+    } else {
+      return (
+        <List
+          ref={this.onListRef}
+          rowCount={this.state.rows.length}
+          rowRenderer={this.renderRow}
+          rowHeight={this.props.rowHeight}
+          selectedRows={[this.state.selectedRow]}
+          onSelectedRowChanged={this.onSelectedRowChanged}
+          onRowClick={this.onRowClick}
+          onRowKeyDown={this.onRowKeyDown}
+          canSelectRow={this.canSelectRow}
+          invalidationProps={{
+            ...this.props,
+            ...this.props.invalidationProps,
+          }}
+        />
+      )
+    }
+  }
+
+  private renderRow = (index: number) => {
+    const row = this.state.rows[index]
+    if (row.kind === 'item') {
+      return this.props.renderItem(row.item, row.matches)
+    } else if (this.props.renderGroupHeader) {
+      return this.props.renderGroupHeader(row.identifier)
+    } else {
+      return null
+    }
+  }
+
+  private onTextBoxRef = (component: TextBox | null) => {
+    this.filterTextBox = component
+  }
+
+  private onListRef = (instance: List | null) => {
+    this.list = instance
+  }
+
+  private onFilterValueChanged = (text: string) => {
+    if (this.props.onFilterTextChanged) {
+      this.props.onFilterTextChanged(text)
+    }
+  }
+
+  private onSelectedRowChanged = (index: number, source: SelectionSource) => {
+    this.setState({ selectedRow: index })
+
+    if (this.props.onSelectionChanged) {
+      const row = this.state.rows[index]
+      if (row.kind === 'item') {
+        this.props.onSelectionChanged(row.item, source)
       }
     }
   }
 
   private canSelectRow = (index: number) => {
+    if (this.props.disabled) {
+      return false
+    }
+
     const row = this.state.rows[index]
     return row.kind === 'item'
   }
@@ -267,26 +360,41 @@ export class FilterList<T extends IFilterListItem> extends React.Component<
       return
     }
 
-    let focusInput = false
-    const firstSelectableRow = list.nextSelectableRow('down', 0)
-    const lastSelectableRow = list.nextSelectableRow('up', 0)
+    const rowCount = this.state.rows.length
+
+    const firstSelectableRow = findNextSelectableRow(
+      rowCount,
+      { direction: 'down', row: -1 },
+      this.canSelectRow
+    )
+    const lastSelectableRow = findNextSelectableRow(
+      rowCount,
+      { direction: 'up', row: 0 },
+      this.canSelectRow
+    )
+
+    let shouldFocus = false
+
     if (event.key === 'ArrowUp' && row === firstSelectableRow) {
-      focusInput = true
+      shouldFocus = true
     } else if (event.key === 'ArrowDown' && row === lastSelectableRow) {
-      focusInput = true
+      shouldFocus = true
     }
 
-    if (focusInput) {
-      const input = this.filterInput
-      if (input) {
+    if (shouldFocus) {
+      const textBox = this.filterTextBox
+
+      if (textBox) {
         event.preventDefault()
-        input.focus()
+        textBox.focus()
       }
     }
   }
 
   private onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const list = this.list
+    const key = event.key
+
     if (!list) {
       return
     }
@@ -299,56 +407,94 @@ export class FilterList<T extends IFilterListItem> extends React.Component<
       return
     }
 
-    if (event.key === 'ArrowDown') {
-      if (this.state.rows.length > 0) {
-        this.setState(
-          { selectedRow: list.nextSelectableRow('down', 0) },
-          () => {
-            list.focus()
-          }
+    const rowCount = this.state.rows.length
+
+    if (key === 'ArrowDown') {
+      if (rowCount > 0) {
+        const selectedRow = findNextSelectableRow(
+          rowCount,
+          { direction: 'down', row: -1 },
+          this.canSelectRow
         )
+        if (selectedRow != null) {
+          this.setState({ selectedRow }, () => {
+            list.focus()
+          })
+        }
       }
 
       event.preventDefault()
-    } else if (event.key === 'ArrowUp') {
-      if (this.state.rows.length > 0) {
-        this.setState({ selectedRow: list.nextSelectableRow('up', 0) }, () => {
-          list.focus()
-        })
+    } else if (key === 'ArrowUp') {
+      if (rowCount > 0) {
+        const selectedRow = findNextSelectableRow(
+          rowCount,
+          { direction: 'up', row: 0 },
+          this.canSelectRow
+        )
+        if (selectedRow != null) {
+          this.setState({ selectedRow }, () => {
+            list.focus()
+          })
+        }
       }
 
       event.preventDefault()
-    } else if (event.key === 'Enter') {
+    } else if (key === 'Enter') {
       // no repositories currently displayed, bail out
-      if (!this.state.rows.length) {
-        event.preventDefault()
-        return
+      if (rowCount === 0) {
+        return event.preventDefault()
       }
 
-      const row = list.nextSelectableRow('down', 0)
-      this.onRowClick(row)
+      const filterText = this.props.filterText
+
+      if (filterText !== undefined && !/\S/.test(filterText)) {
+        return event.preventDefault()
+      }
+
+      const row = findNextSelectableRow(
+        rowCount,
+        { direction: 'down', row: -1 },
+        this.canSelectRow
+      )
+
+      if (row != null) {
+        this.onRowClick(row)
+      }
     }
   }
+}
+
+export function getText<T extends IFilterListItem>(
+  item: T
+): ReadonlyArray<string> {
+  return item['text']
 }
 
 function createStateUpdate<T extends IFilterListItem>(
   props: IFilterListProps<T>
 ) {
   const flattenedRows = new Array<IFilterListRow<T>>()
-  const filter = props.filterText.toLowerCase()
+  const filter = (props.filterText || '').toLowerCase()
 
   for (const group of props.groups) {
-    const items = group.items.filter(i => {
-      return i.text.toLowerCase().includes(filter)
-    })
+    const items: ReadonlyArray<IMatch<T>> = filter
+      ? match(filter, group.items, getText)
+      : group.items.map(item => ({
+          score: 1,
+          matches: { title: [], subtitle: [] },
+          item,
+        }))
 
     if (!items.length) {
       continue
     }
 
-    flattenedRows.push({ kind: 'group', identifier: group.identifier })
-    for (const item of items) {
-      flattenedRows.push({ kind: 'item', item })
+    if (props.renderGroupHeader) {
+      flattenedRows.push({ kind: 'group', identifier: group.identifier })
+    }
+
+    for (const { item, matches } of items) {
+      flattenedRows.push({ kind: 'item', item, matches })
     }
   }
 

@@ -1,16 +1,13 @@
-/* tslint:disable:no-sync-functions */
+/* eslint-disable no-sync */
 
 import * as fs from 'fs'
 import * as cp from 'child_process'
 import { getLogFiles } from './review-logs'
-const distInfo = require('./dist-info')
+import { getProductName } from '../app/package-info'
+import { getDistPath } from './dist-info'
+import { isCircleCI, isRunningOnFork } from './build-platforms'
 
-const getDistPath: () => string = distInfo.getDistPath
-const getProductName: () => string = distInfo.getProductName
-
-const isFork = process.env.CIRCLE_PR_USERNAME
-
-if (process.platform === 'darwin' && process.env.CIRCLECI && !isFork) {
+if (isCircleCI() && !isRunningOnFork()) {
   const archive = `${getDistPath()}/${getProductName()}.app`
   try {
     console.log('validating signature of Desktop app')

@@ -1,7 +1,7 @@
 import * as React from 'react'
 
-import { CloningRepository } from '../lib/dispatcher'
-import { ICloneProgress } from '../lib/app-state'
+import { CloningRepository } from '../models/cloning-repository'
+import { ICloneProgress } from '../models/progress'
 import { Octicon, OcticonSymbol } from './octicons'
 import { UiView } from './ui-view'
 

@@ -1,11 +1,13 @@
 import { BrowserWindow, ipcMain, Menu, app, dialog } from 'electron'
 import { Emitter, Disposable } from 'event-kit'
+import { encodePathAsUrl } from '../lib/path'
 import { registerWindowStateChangedEvents } from '../lib/window-state'
 import { MenuEvent } from './menu'
 import { URLActionType } from '../lib/parse-app-url'
 import { ILaunchStats } from '../lib/stats'
 import { menuFromElectronMenu } from '../models/app-menu'
 import { now } from './now'
+import * as path from 'path'
 
 let windowStateKeeper: any | null = null
 
@@ -50,12 +52,15 @@ export class AppWindow {
         // Enable, among other things, the ResizeObserver
         experimentalFeatures: true,
       },
+      acceptFirstMouse: true,
     }
 
     if (__DARWIN__) {
       windowOptions.titleBarStyle = 'hidden'
     } else if (__WIN32__) {
       windowOptions.frame = false
+    } else if (__LINUX__) {
+      windowOptions.icon = path.join(__dirname, 'static', 'icon-logo.png')
     }
 
     this.window = new BrowserWindow(windowOptions)
@@ -80,6 +85,29 @@ export class AppWindow {
           e.preventDefault()
           Menu.sendActionToFirstResponder('hide:')
         }
+      })
+    }
+
+    if (__WIN32__) {
+      // workaround for known issue with fullscreen-ing the app and restoring
+      // is that some Chromium API reports the incorrect bounds, so that it
+      // will leave a small space at the top of the screen on every other
+      // maximize
+      //
+      // adapted from https://github.com/electron/electron/issues/12971#issuecomment-403956396
+      //
+      // can be tidied up once https://github.com/electron/electron/issues/12971
+      // has been confirmed as resolved
+      this.window.once('ready-to-show', () => {
+        this.window.on('unmaximize', () => {
+          setTimeout(() => {
+            const bounds = this.window.getBounds()
+            bounds.width += 1
+            this.window.setBounds(bounds)
+            bounds.width -= 1
+            this.window.setBounds(bounds)
+          }, 5)
+        })
       })
     }
   }
@@ -132,8 +160,7 @@ export class AppWindow {
     this.window.on('blur', () => this.window.webContents.send('blur'))
 
     registerWindowStateChangedEvents(this.window)
-
-    this.window.loadURL(`file://${__dirname}/index.html`)
+    this.window.loadURL(encodePathAsUrl(__dirname, 'index.html'))
   }
 
   /**

@@ -8,10 +8,11 @@ documentation.
 If you are interested in contributing to the project, you should read these
 resources to get familiar with how things work:
 
- - **[How Can I Contribute?](../CONTRIBUTING.md#how-can-i-contribute)** -
+ - **[How Can I Contribute?](../.github/CONTRIBUTING.md#how-can-i-contribute)** -
     details about how you can participate
  - **[Development Environment Setup](contributing/setup.md)** - everything
     you need to know to get Desktop up and running
+ - **[Engineering Values](contributing/engineering-values.md)** - our high-level engineering values
  - **[Style Guide](contributing/styleguide.md)** - notes on the coding style
  - **[Tooling](contributing/tooling.md)** - if you have a preferred IDE,
     there's some enhancements to make your life easier
@@ -27,7 +28,7 @@ Details about how the team is organizing and shipping GitHub Desktop:
     releases
  - **[Issue Triage](process/issue-triage.md)** - how we address issues reported
     by users
- - **[Review Process](process/reviews.md)** - how we review contributions
+ - **[Pull Request Triage](process/pull-request-triage.md)** - how contributions are reviewed
  - **[Releasing Updates](process/releasing-updates.md)** - how we deploy things
 
 ## Technical
@@ -42,3 +43,5 @@ and how things work:
  - **[Developer OAuth App](technical/oauth.md)** - GitHub Desktop ships with
     the ability to OAuth on behalf of a user. A developer OAuth app is bundled
     to reduce the friction of getting started.
+ - **[Building and Packaging Desktop](technical/packaging.md)** - Outlines how
+    Desktop is currently packaged for all platforms 
