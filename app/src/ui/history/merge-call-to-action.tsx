@@ -1,16 +1,24 @@
 import * as React from 'react'
 
+<<<<<<< HEAD
 import { ICompareBranch, HistoryTabMode } from '../../lib/app-state'
+=======
+import { CompareActionKind, MergeResultStatus } from '../../lib/app-state'
+>>>>>>> cleanup-old-merge-conflict-dialogs
 import { Repository } from '../../models/repository'
 import { Branch } from '../../models/branch'
 import { Dispatcher } from '../../lib/dispatcher'
 import { Button } from '../lib/button'
+import { MergeStatusHeader } from './merge-status-header'
+import { MergeResultKind } from '../../models/merge'
 
 interface IMergeCallToActionProps {
   readonly repository: Repository
   readonly dispatcher: Dispatcher
+  readonly mergeStatus: MergeResultStatus | null
   readonly currentBranch: Branch
-  readonly formState: ICompareBranch
+  readonly comparisonBranch: Branch
+  readonly commitsBehind: number
 
   /**
    * Callback to execute after a merge has been performed
@@ -23,67 +31,152 @@ export class MergeCallToAction extends React.Component<
   {}
 > {
   public render() {
-    const count = this.props.formState.aheadBehind.behind
+    const { commitsBehind } = this.props
+
+    const cannotMergeBranch =
+      this.props.mergeStatus != null &&
+      this.props.mergeStatus.kind === MergeResultKind.Invalid
+
+    const disabled = commitsBehind <= 0 || cannotMergeBranch
+
+    const mergeDetails = commitsBehind > 0 ? this.renderMergeStatus() : null
 
     return (
       <div className="merge-cta">
-        <Button
-          type="submit"
-          disabled={count <= 0}
-          onClick={this.onMergeClicked}
-        >
+        <Button type="submit" disabled={disabled} onClick={this.onMergeClicked}>
           Merge into <strong>{this.props.currentBranch.name}</strong>
         </Button>
 
+        {mergeDetails}
+      </div>
+    )
+  }
+
+  private renderMergeStatus() {
+    return (
+      <div className="merge-status-component">
+        <MergeStatusHeader status={this.props.mergeStatus} />
+
         {this.renderMergeDetails(
-          this.props.formState,
-          this.props.currentBranch
+          this.props.currentBranch,
+          this.props.comparisonBranch,
+          this.props.mergeStatus,
+          this.props.commitsBehind
         )}
       </div>
     )
   }
 
-  private renderMergeDetails(formState: ICompareBranch, currentBranch: Branch) {
-    const branch = formState.comparisonBranch
-    const count = formState.aheadBehind.behind
-
-    if (count > 0) {
-      const pluralized = count === 1 ? 'commit' : 'commits'
-      return (
-        <div className="merge-message merge-message-legacy">
-          This will merge
-          <strong>{` ${count} ${pluralized}`}</strong>
-          {` `}
-          from
-          {` `}
-          <strong>{branch.name}</strong>
-          {` `}
-          into
-          {` `}
-          <strong>{currentBranch.name}</strong>
-        </div>
-      )
+  private renderMergeDetails(
+    currentBranch: Branch,
+    comparisonBranch: Branch,
+    mergeStatus: MergeResultStatus | null,
+    behindCount: number
+  ) {
+    if (mergeStatus === null) {
+      return null
     }
 
+    if (mergeStatus.kind === MergeResultKind.Loading) {
+      return this.renderLoadingMergeMessage()
+    }
+    if (mergeStatus.kind === MergeResultKind.Clean) {
+      return this.renderCleanMergeMessage(
+        currentBranch,
+        comparisonBranch,
+        behindCount
+      )
+    }
+    if (mergeStatus.kind === MergeResultKind.Invalid) {
+      return this.renderInvalidMergeMessage()
+    }
+    if (mergeStatus.kind === MergeResultKind.Conflicts) {
+      return this.renderConflictedMergeMessage(
+        currentBranch,
+        comparisonBranch,
+        mergeStatus.conflictedFiles
+      )
+    }
     return null
   }
 
+  private renderLoadingMergeMessage() {
+    return (
+      <div className="merge-message merge-message-loading">
+        Checking for ability to merge automatically...
+      </div>
+    )
+  }
+
+  private renderCleanMergeMessage(
+    currentBranch: Branch,
+    branch: Branch,
+    count: number
+  ) {
+    if (count > 0) {
+      const pluralized = count === 1 ? 'commit' : 'commits'
+      return (
+        <div className="merge-message">
+          This will merge
+          <strong>{` ${count} ${pluralized}`}</strong>
+          {` from `}
+          <strong>{branch.name}</strong>
+          {` into `}
+          <strong>{currentBranch.name}</strong>
+        </div>
+      )
+    } else {
+      return null
+    }
+  }
+
+  private renderInvalidMergeMessage() {
+    return (
+      <div className="merge-message">
+        Unable to merge unrelated histories in this repository
+      </div>
+    )
+  }
+
+  private renderConflictedMergeMessage(
+    currentBranch: Branch,
+    branch: Branch,
+    count: number
+  ) {
+    const pluralized = count === 1 ? 'file' : 'files'
+    return (
+      <div className="merge-message">
+        There will be
+        <strong>{` ${count} conflicted ${pluralized}`}</strong>
+        {` when merging `}
+        <strong>{branch.name}</strong>
+        {` into `}
+        <strong>{currentBranch.name}</strong>
+      </div>
+    )
+  }
+
   private onMergeClicked = async () => {
-    const formState = this.props.formState
+    const { comparisonBranch, repository, mergeStatus } = this.props
 
     this.props.dispatcher.recordCompareInitiatedMerge()
 
     await this.props.dispatcher.mergeBranch(
-      this.props.repository,
-      formState.comparisonBranch.name,
-      null
+      repository,
+      comparisonBranch.name,
+      mergeStatus
     )
 
+<<<<<<< HEAD
     this.props.dispatcher.executeCompare(this.props.repository, {
       kind: HistoryTabMode.History,
+=======
+    this.props.dispatcher.executeCompare(repository, {
+      kind: CompareActionKind.History,
+>>>>>>> cleanup-old-merge-conflict-dialogs
     })
 
-    this.props.dispatcher.updateCompareForm(this.props.repository, {
+    this.props.dispatcher.updateCompareForm(repository, {
       showBranchList: false,
       filterText: '',
     })
