@@ -1,12 +1,21 @@
 import { spawnAndComplete } from './spawn'
+import { getFilesWithConflictMarkers } from './diff-check'
 import {
   WorkingDirectoryStatus,
   WorkingDirectoryFileChange,
   AppFileStatus,
   FileEntry,
   GitStatusEntry,
+  ConflictStatus,
 } from '../../models/status'
-import { parsePorcelainStatus, mapStatus } from '../status-parser'
+import {
+  parsePorcelainStatus,
+  mapStatus,
+  IStatusEntry,
+  IStatusHeader,
+  isStatusHeader,
+  isStatusEntry,
+} from '../status-parser'
 import { DiffSelectionType, DiffSelection } from '../../models/diff'
 import { Repository } from '../../models/repository'
 import { IAheadBehind } from '../../models/branch'
@@ -23,9 +32,18 @@ const MaxStatusBufferSize = 20e6 // 20MB in decimal
 
 /** The encapsulation of the result from 'git status' */
 export interface IStatusResult {
+  /** The name of the current branch */
   readonly currentBranch?: string
+
+  /** The name of the current upstream branch */
   readonly currentUpstreamBranch?: string
+
+  /** The SHA of the tip commit of the current branch */
   readonly currentTip?: string
+
+  /** How many commits ahead and behind
+   *  the `currentBranch` is compared to the `currentUpstreamBranch`
+   */
   readonly branchAheadBehind?: IAheadBehind
 
   /** true if the repository exists at the given location */
@@ -35,7 +53,18 @@ export interface IStatusResult {
   readonly workingDirectory: WorkingDirectoryStatus
 }
 
-function convertToAppStatus(status: FileEntry): AppFileStatus {
+interface IStatusHeadersData {
+  currentBranch?: string
+  currentUpstreamBranch?: string
+  currentTip?: string
+  branchAheadBehind?: IAheadBehind
+  match: RegExpMatchArray | null
+}
+
+function convertToAppStatus(
+  status: FileEntry,
+  hasConflictMarkers: boolean
+): AppFileStatus {
   if (status.kind === 'ordinary') {
     switch (status.type) {
       case 'added':
@@ -50,7 +79,9 @@ function convertToAppStatus(status: FileEntry): AppFileStatus {
   } else if (status.kind === 'renamed') {
     return AppFileStatus.Renamed
   } else if (status.kind === 'conflicted') {
-    return AppFileStatus.Conflicted
+    return hasConflictMarkers
+      ? AppFileStatus.Conflicted
+      : AppFileStatus.Resolved
   } else if (status.kind === 'untracked') {
     return AppFileStatus.New
   }
@@ -103,78 +134,35 @@ export async function getStatus(
   }
 
   const stdout = result.output.toString('utf8')
+  const parsed = parsePorcelainStatus(stdout)
+  const headers = parsed.filter(isStatusHeader)
+  const entries = parsed.filter(isStatusEntry)
+
+  // run git diff check if anything is conflicted
+  const filesWithConflictMarkers = entries.some(
+    es => mapStatus(es.statusCode).kind === 'conflicted'
+  )
+    ? await getFilesWithConflictMarkers(repository.path)
+    : new Map<string, number>()
 
   // Map of files keyed on their paths.
-  // Note, map maintains insertion order
-  const files = new Map<string, WorkingDirectoryFileChange>()
+  const files = entries.reduce(
+    (files, entry) => buildStatusMap(files, entry, filesWithConflictMarkers),
+    new Map<string, WorkingDirectoryFileChange>()
+  )
 
-  let currentBranch: string | undefined = undefined
-  let currentUpstreamBranch: string | undefined = undefined
-  let currentTip: string | undefined = undefined
-  let branchAheadBehind: IAheadBehind | undefined = undefined
-
-  for (const entry of parsePorcelainStatus(stdout)) {
-    if (entry.kind === 'entry') {
-      const status = mapStatus(entry.statusCode)
-
-      if (status.kind === 'ordinary') {
-        // when a file is added in the index but then removed in the working
-        // directory, the file won't be part of the commit, so we can skip
-        // displaying this entry in the changes list
-        if (
-          status.index === GitStatusEntry.Added &&
-          status.workingTree === GitStatusEntry.Deleted
-        ) {
-          continue
-        }
-      }
-
-      if (status.kind === 'untracked') {
-        // when a delete has been staged, but an untracked file exists with the
-        // same path, we should ensure that we only draw one entry in the
-        // changes list - see if an entry already exists for this path and
-        // remove it if found
-        files.delete(entry.path)
-      }
-
-      // for now we just poke at the existing summary
-      const summary = convertToAppStatus(status)
-      const selection = DiffSelection.fromInitialSelection(
-        DiffSelectionType.All
-      )
-
-      files.set(
-        entry.path,
-        new WorkingDirectoryFileChange(
-          entry.path,
-          summary,
-          selection,
-          entry.oldPath
-        )
-      )
-    } else if (entry.kind === 'header') {
-      let m: RegExpMatchArray | null
-      const value = entry.value
-
-      // This intentionally does not match branch.oid initial
-      if ((m = value.match(/^branch\.oid ([a-f0-9]+)$/))) {
-        currentTip = m[1]
-      } else if ((m = value.match(/^branch.head (.*)/))) {
-        if (m[1] !== '(detached)') {
-          currentBranch = m[1]
-        }
-      } else if ((m = value.match(/^branch.upstream (.*)/))) {
-        currentUpstreamBranch = m[1]
-      } else if ((m = value.match(/^branch.ab \+(\d+) -(\d+)$/))) {
-        const ahead = parseInt(m[1], 10)
-        const behind = parseInt(m[2], 10)
-
-        if (!isNaN(ahead) && !isNaN(behind)) {
-          branchAheadBehind = { ahead, behind }
-        }
-      }
-    }
-  }
+  const {
+    currentBranch,
+    currentUpstreamBranch,
+    currentTip,
+    branchAheadBehind,
+  } = headers.reduce(parseStatusHeader, {
+    currentBranch: undefined,
+    currentUpstreamBranch: undefined,
+    currentTip: undefined,
+    branchAheadBehind: undefined,
+    match: null,
+  })
 
   const workingDirectory = WorkingDirectoryStatus.fromFiles([...files.values()])
 
@@ -185,5 +173,111 @@ export async function getStatus(
     branchAheadBehind,
     exists: true,
     workingDirectory,
+  }
+}
+
+/**
+ *
+ * Update map of working directory changes with a file status entry.
+ * Reducer(ish).
+ *
+ * (Map is used here to maintain insertion order.)
+ */
+function buildStatusMap(
+  files: Map<string, WorkingDirectoryFileChange>,
+  entry: IStatusEntry,
+  filesWithConflictMarkers: Map<string, number>
+): Map<string, WorkingDirectoryFileChange> {
+  const status = mapStatus(entry.statusCode)
+
+  if (status.kind === 'ordinary') {
+    // when a file is added in the index but then removed in the working
+    // directory, the file won't be part of the commit, so we can skip
+    // displaying this entry in the changes list
+    if (
+      status.index === GitStatusEntry.Added &&
+      status.workingTree === GitStatusEntry.Deleted
+    ) {
+      return files
+    }
+  }
+
+  if (status.kind === 'untracked') {
+    // when a delete has been staged, but an untracked file exists with the
+    // same path, we should ensure that we only draw one entry in the
+    // changes list - see if an entry already exists for this path and
+    // remove it if found
+    files.delete(entry.path)
+  }
+
+  // TODO: we need to differentiate here between conflicted text files (that
+  //       we can inspect and check if they have been resolved) and binary files
+  //       (that we cannot inspect, and we need to do our own inspection and
+  //       defer to the index state)
+
+  // for now we just poke at the existing summary
+  const summary = convertToAppStatus(
+    status,
+    filesWithConflictMarkers.has(entry.path)
+  )
+  const selection = DiffSelection.fromInitialSelection(DiffSelectionType.All)
+
+  // TODO: detect that a binary file is conflicted and generate a different
+  //       `conflictStatus` value
+  const conflictMarkerCount = filesWithConflictMarkers.get(entry.path)
+
+  const conflictStatus: ConflictStatus | null =
+    conflictMarkerCount == null ? null : { kind: 'text', conflictMarkerCount }
+
+  files.set(
+    entry.path,
+    new WorkingDirectoryFileChange(
+      entry.path,
+      summary,
+      selection,
+      entry.oldPath,
+      conflictStatus
+    )
+  )
+  return files
+}
+
+/**
+ * Update status header based on the current header entry.
+ * Reducer.
+ */
+function parseStatusHeader(results: IStatusHeadersData, header: IStatusHeader) {
+  let {
+    currentBranch,
+    currentUpstreamBranch,
+    currentTip,
+    branchAheadBehind,
+    match,
+  } = results
+  const value = header.value
+
+  // This intentionally does not match branch.oid initial
+  if ((match = value.match(/^branch\.oid ([a-f0-9]+)$/))) {
+    currentTip = match[1]
+  } else if ((match = value.match(/^branch.head (.*)/))) {
+    if (match[1] !== '(detached)') {
+      currentBranch = match[1]
+    }
+  } else if ((match = value.match(/^branch.upstream (.*)/))) {
+    currentUpstreamBranch = match[1]
+  } else if ((match = value.match(/^branch.ab \+(\d+) -(\d+)$/))) {
+    const ahead = parseInt(match[1], 10)
+    const behind = parseInt(match[2], 10)
+
+    if (!isNaN(ahead) && !isNaN(behind)) {
+      branchAheadBehind = { ahead, behind }
+    }
+  }
+  return {
+    currentBranch,
+    currentUpstreamBranch,
+    currentTip,
+    branchAheadBehind,
+    match,
   }
 }

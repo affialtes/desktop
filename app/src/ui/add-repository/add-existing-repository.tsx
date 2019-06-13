@@ -11,7 +11,7 @@ import { Row } from '../lib/row'
 import { Dialog, DialogContent, DialogFooter } from '../dialog'
 import { Octicon, OcticonSymbol } from '../octicons'
 import { LinkButton } from '../lib/link-button'
-import { PopupType } from '../../lib/app-state'
+import { PopupType } from '../../models/popup'
 import * as Path from 'path'
 
 import untildify = require('untildify')
@@ -208,6 +208,7 @@ export class AddExistingRepository extends React.Component<
     if (repositories && repositories.length) {
       const repository = repositories[0]
       this.props.dispatcher.selectRepository(repository)
+      this.props.dispatcher.recordAddExistingRepository()
     }
   }
 
