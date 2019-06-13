@@ -21,6 +21,12 @@ const defaultBranchNameDefaultValue = __DARWIN__
   ? 'Default Branch'
   : 'default branch'
 
+enum ZoomDirection {
+  Reset,
+  In,
+  Out,
+}
+
 export type MenuLabels = {
   editorLabel?: string
   shellLabel?: string
@@ -165,6 +171,12 @@ export function buildDefaultMenu({
       },
       separator,
       {
+        label: __DARWIN__ ? 'Go to Summary' : 'Go to &Summary',
+        id: 'go-to-commit-message',
+        accelerator: 'CmdOrCtrl+G',
+        click: emit('go-to-commit-message'),
+      },
+      {
         label: __DARWIN__ ? 'Toggle Full Screen' : 'Toggle &full screen',
         role: 'togglefullscreen',
       },
@@ -253,7 +265,11 @@ export function buildDefaultMenu({
         click: emit('open-in-shell'),
       },
       {
-        label: __DARWIN__ ? 'Show in Finder' : 'Show in E&xplorer',
+        label: __DARWIN__
+          ? 'Show in Finder'
+          : __WIN32__
+          ? 'Show in E&xplorer'
+          : 'Show in your File Manager',
         id: 'open-working-directory',
         accelerator: 'CmdOrCtrl+Shift+F',
         click: emit('open-working-directory'),
@@ -298,7 +314,7 @@ export function buildDefaultMenu({
       separator,
       {
         label: __DARWIN__
-          ? `Update From ${defaultBranchName}`
+          ? `Update from ${defaultBranchName}`
           : `&Update from ${defaultBranchName}`,
         id: 'update-branch',
         accelerator: 'CmdOrCtrl+Shift+U',
@@ -312,7 +328,7 @@ export function buildDefaultMenu({
       },
       {
         label: __DARWIN__
-          ? 'Merge Into Current Branch…'
+          ? 'Merge into Current Branch…'
           : '&Merge into current branch…',
         id: 'merge-branch',
         accelerator: 'CmdOrCtrl+Shift+M',
@@ -373,8 +389,8 @@ export function buildDefaultMenu({
   const showLogsLabel = __DARWIN__
     ? 'Show Logs in Finder'
     : __WIN32__
-      ? 'S&how logs in Explorer'
-      : 'S&how logs in your File Manager'
+    ? 'S&how logs in Explorer'
+    : 'S&how logs in your File Manager'
 
   const showLogsItem: Electron.MenuItemConstructorOptions = {
     label: showLogsLabel,
@@ -409,6 +425,15 @@ export function buildDefaultMenu({
       {
         label: 'Crash renderer process…',
         click: emit('boomtown'),
+      },
+      {
+        label: 'Show popup',
+        submenu: [
+          {
+            label: 'Release notes',
+            click: emit('show-release-notes-popup'),
+          },
+        ],
       }
     )
   }
@@ -458,12 +483,6 @@ function emit(name: MenuEvent): ClickHandler {
   }
 }
 
-enum ZoomDirection {
-  Reset,
-  In,
-  Out,
-}
-
 /** The zoom steps that we support, these factors must sorted */
 const ZoomInFactors = [1, 1.1, 1.25, 1.5, 1.75, 2]
 const ZoomOutFactors = ZoomInFactors.slice().reverse()
@@ -506,9 +525,8 @@ function zoom(direction: ZoomDirection): ClickHandler {
         // zoom factors the value is referring to.
         const currentZoom = findClosestValue(zoomFactors, rawZoom)
 
-        const nextZoomLevel = zoomFactors.find(
-          f =>
-            direction === ZoomDirection.In ? f > currentZoom : f < currentZoom
+        const nextZoomLevel = zoomFactors.find(f =>
+          direction === ZoomDirection.In ? f > currentZoom : f < currentZoom
         )
 
         // If we couldn't find a zoom level (likely due to manual manipulation

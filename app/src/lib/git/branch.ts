@@ -4,7 +4,6 @@ import { Repository } from '../../models/repository'
 import { Branch, BranchType } from '../../models/branch'
 import { IGitAccount } from '../../models/git-account'
 import { envForAuthentication } from './authentication'
-import { getCaptures } from '../helpers/regex'
 
 /**
  * Create a new branch from the given start point.
@@ -79,8 +78,10 @@ export async function deleteBranch(
   )
 
   if (branchExistsOnRemote) {
+    const networkArguments = await gitNetworkArguments(repository, account)
+
     const args = [
-      ...gitNetworkArguments,
+      ...networkArguments,
       'push',
       remote,
       `:${branch.nameWithoutRemote}`,
@@ -102,8 +103,10 @@ async function checkIfBranchExistsOnRemote(
   account: IGitAccount | null,
   remote: string
 ): Promise<boolean> {
+  const networkArguments = await gitNetworkArguments(repository, account)
+
   const args = [
-    ...gitNetworkArguments,
+    ...networkArguments,
     'ls-remote',
     '--heads',
     remote,
@@ -119,20 +122,37 @@ async function checkIfBranchExistsOnRemote(
   return result.stdout.length > 0
 }
 
+/**
+ * Finds branches that have a tip equal to the given committish
+ *
+ * @param repository within which to execute the command
+ * @param commitish a sha, HEAD, etc that the branch(es) tip should be
+ * @returns list branch names. null if an error is encountered
+ */
 export async function getBranchesPointedAt(
   repository: Repository,
   commitish: string
-): Promise<Array<string>> {
+): Promise<Array<string> | null> {
   const args = [
     'branch',
     `--points-at=${commitish}`,
     '--format=%(refname:short)',
   ]
-  const { stdout } = await git(args, repository.path, 'branchPointedAt')
-  // split along newlines, which should just be branch names
-  const captures = getCaptures(stdout, /\s*(.+)\n/g)
-  if (captures.length === 0) {
-    return []
+  // this command has an implicit \n delimiter
+  const { stdout, exitCode } = await git(
+    args,
+    repository.path,
+    'branchPointedAt',
+    {
+      // - 1 is returned if a common ancestor cannot be resolved
+      // - 129 is returned if ref is malformed
+      //   "warning: ignoring broken ref refs/remotes/origin/master."
+      successExitCodes: new Set([0, 1, 129]),
+    }
+  )
+  if (exitCode === 1 || exitCode === 129) {
+    return null
   }
-  return captures.reduce((acc, val) => acc.concat(val))
+  // split (and remove trailing element cause its always an empty string)
+  return stdout.split('\n').slice(0, -1)
 }

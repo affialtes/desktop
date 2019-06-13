@@ -19,7 +19,7 @@ import {
   backgroundTaskHandler,
   pushNeedsPullHandler,
   upstreamAlreadyExistsHandler,
-} from '../lib/dispatcher'
+} from './dispatcher'
 import {
   AppStore,
   GitHubUserStore,
@@ -51,6 +51,7 @@ import {
 } from '../lib/source-map-support'
 import { UiActivityMonitor } from './lib/ui-activity-monitor'
 import { RepositoryStateCache } from '../lib/stores/repository-state-cache'
+import { ApiRepositoriesStore } from '../lib/stores/api-repositories-store'
 
 if (__DEV__) {
   installDevGlobals()
@@ -80,7 +81,7 @@ const startTime = performance.now()
 
 if (!process.env.TEST_ENV) {
   /* This is the magic trigger for webpack to go compile
-  * our sass into css and inject it into the DOM. */
+   * our sass into css and inject it into the DOM. */
   require('../../styles/desktop.scss')
 }
 
@@ -128,6 +129,8 @@ const repositoryStateManager = new RepositoryStateCache(repo =>
   gitHubUserStore.getUsersForRepository(repo)
 )
 
+const apiRepositoriesStore = new ApiRepositoriesStore(accountsStore)
+
 const appStore = new AppStore(
   gitHubUserStore,
   cloningRepositoriesStore,
@@ -137,7 +140,8 @@ const appStore = new AppStore(
   accountsStore,
   repositoriesStore,
   pullRequestStore,
-  repositoryStateManager
+  repositoryStateManager,
+  apiRepositoriesStore
 )
 
 const dispatcher = new Dispatcher(appStore, repositoryStateManager, statsStore)
@@ -161,8 +165,11 @@ ipcRenderer.on('focus', () => {
   const { selectedState } = appStore.getState()
 
   // Refresh the currently selected repository on focus (if
-  // we have a selected repository).
-  if (selectedState && selectedState.type === SelectionType.Repository) {
+  // we have a selected repository, that is not cloning).
+  if (
+    selectedState &&
+    !(selectedState.type === SelectionType.CloningRepository)
+  ) {
     dispatcher.refreshRepository(selectedState.repository)
   }
 

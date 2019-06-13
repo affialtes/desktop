@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Account } from '../../models/account'
 import { PreferencesTab } from '../../models/preferences'
 import { ExternalEditor } from '../../lib/editors'
-import { Dispatcher } from '../../lib/dispatcher'
+import { Dispatcher } from '../dispatcher'
 import { TabBar } from '../tab-bar'
 import { Accounts } from './accounts'
 import { Advanced } from './advanced'
@@ -36,6 +36,7 @@ interface IPreferencesProps {
   readonly selectedExternalEditor?: ExternalEditor
   readonly selectedShell: Shell
   readonly selectedTheme: ApplicationTheme
+  readonly automaticallySwitchTheme: boolean
 }
 
 interface IPreferencesState {
@@ -46,6 +47,7 @@ interface IPreferencesState {
   readonly optOutOfUsageTracking: boolean
   readonly confirmRepositoryRemoval: boolean
   readonly confirmDiscardChanges: boolean
+  readonly automaticallySwitchTheme: boolean
   readonly availableEditors: ReadonlyArray<ExternalEditor>
   readonly selectedExternalEditor?: ExternalEditor
   readonly availableShells: ReadonlyArray<Shell>
@@ -70,6 +72,7 @@ export class Preferences extends React.Component<
       optOutOfUsageTracking: false,
       confirmRepositoryRemoval: false,
       confirmDiscardChanges: false,
+      automaticallySwitchTheme: false,
       selectedExternalEditor: this.props.selectedExternalEditor,
       availableShells: [],
       selectedShell: this.props.selectedShell,
@@ -212,6 +215,10 @@ export class Preferences extends React.Component<
           <Appearance
             selectedTheme={this.props.selectedTheme}
             onSelectedThemeChanged={this.onSelectedThemeChanged}
+            automaticallySwitchTheme={this.props.automaticallySwitchTheme}
+            onAutomaticallySwitchThemeChanged={
+              this.onAutomaticallySwitchThemeChanged
+            }
           />
         )
       case PreferencesTab.Advanced: {
@@ -284,6 +291,14 @@ export class Preferences extends React.Component<
     this.props.dispatcher.setSelectedTheme(theme)
   }
 
+  private onAutomaticallySwitchThemeChanged = (
+    automaticallySwitchTheme: boolean
+  ) => {
+    this.props.dispatcher.onAutomaticallySwitchThemeChanged(
+      automaticallySwitchTheme
+    )
+  }
+
   private renderFooter() {
     const hasDisabledError = this.state.disallowedCharactersMessage != null
 
@@ -313,7 +328,10 @@ export class Preferences extends React.Component<
   private onSave = async () => {
     await setGlobalConfigValue('user.name', this.state.committerName)
     await setGlobalConfigValue('user.email', this.state.committerEmail)
-    await this.props.dispatcher.setStatsOptOut(this.state.optOutOfUsageTracking)
+    await this.props.dispatcher.setStatsOptOut(
+      this.state.optOutOfUsageTracking,
+      false
+    )
     await this.props.dispatcher.setConfirmRepoRemovalSetting(
       this.state.confirmRepositoryRemoval
     )

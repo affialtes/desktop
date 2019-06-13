@@ -5,11 +5,11 @@ import { ChangesList } from './changes-list'
 import { DiffSelectionType } from '../../models/diff'
 import { IChangesState } from '../../lib/app-state'
 import { Repository } from '../../models/repository'
-import { Dispatcher } from '../../lib/dispatcher'
+import { Dispatcher } from '../dispatcher'
 import { IGitHubUser } from '../../lib/databases'
 import { IssuesStore, GitHubUserStore } from '../../lib/stores'
 import { CommitIdentity } from '../../models/commit-identity'
-import { Commit } from '../../models/commit'
+import { Commit, ICommitContext } from '../../models/commit'
 import { UndoCommit } from './undo-commit'
 import {
   IAutocompletionProvider,
@@ -20,10 +20,13 @@ import {
 import { ClickSource } from '../lib/list'
 import { WorkingDirectoryFileChange } from '../../models/status'
 import { CSSTransitionGroup } from 'react-transition-group'
-import { openFile } from '../../lib/open-file'
-import { ITrailer } from '../../lib/git/interpret-trailers'
+import { openFile } from '../lib/open-file'
 import { Account } from '../../models/account'
 import { PopupType } from '../../models/popup'
+import { enableFileSizeWarningCheck } from '../../lib/feature-flag'
+import { filesNotTrackedByLFS } from '../../lib/git/lfs'
+import { getLargeFilePaths } from '../../lib/large-files'
+import { isConflictedFile, hasUnresolvedConflicts } from '../../lib/status'
 
 /**
  * The timeout for the animation of the enter/leave animation for Undo.
@@ -47,6 +50,7 @@ interface IChangesSidebarProps {
   readonly isCommitting: boolean
   readonly isPushPullFetchInProgress: boolean
   readonly gitHubUserStore: GitHubUserStore
+  readonly focusCommitMessage: boolean
   readonly askForConfirmationOnDiscardChanges: boolean
   readonly accounts: ReadonlyArray<Account>
   /** The name of the currently selected external editor */
@@ -58,6 +62,8 @@ interface IChangesSidebarProps {
    * @param fullPath The full path to the file on disk
    */
   readonly onOpenInExternalEditor: (fullPath: string) => void
+  readonly onChangesListScrolled: (scrollTop: number) => void
+  readonly changesListScrollTop: number
 }
 
 export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
@@ -114,16 +120,65 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
     }
   }
 
-  private onCreateCommit = (
-    summary: string,
-    description: string | null,
-    trailers?: ReadonlyArray<ITrailer>
+  private onCreateCommit = async (
+    context: ICommitContext
   ): Promise<boolean> => {
+    if (enableFileSizeWarningCheck()) {
+      const overSizedFiles = await getLargeFilePaths(
+        this.props.repository,
+        this.props.changes.workingDirectory,
+        100
+      )
+      const filesIgnoredByLFS = await filesNotTrackedByLFS(
+        this.props.repository,
+        overSizedFiles
+      )
+
+      if (filesIgnoredByLFS.length !== 0) {
+        this.props.dispatcher.showPopup({
+          type: PopupType.OversizedFiles,
+          oversizedFiles: filesIgnoredByLFS,
+          context: context,
+          repository: this.props.repository,
+        })
+
+        return false
+      }
+    }
+
+    // are any conflicted files left?
+    const conflictedFilesLeft = this.props.changes.workingDirectory.files.filter(
+      f =>
+        isConflictedFile(f.status) &&
+        f.selection.getSelectionType() === DiffSelectionType.None
+    )
+
+    if (conflictedFilesLeft.length === 0) {
+      this.props.dispatcher.clearMergeConflictsBanner()
+      this.props.dispatcher.recordUnguidedConflictedMergeCompletion()
+    }
+
+    // which of the files selected for committing are conflicted?
+    const conflictedFilesSelected = this.props.changes.workingDirectory.files.filter(
+      f =>
+        isConflictedFile(f.status) &&
+        hasUnresolvedConflicts(f.status) &&
+        f.selection.getSelectionType() !== DiffSelectionType.None
+    )
+
+    if (conflictedFilesSelected.length > 0) {
+      this.props.dispatcher.showPopup({
+        type: PopupType.CommitConflictsWarning,
+        files: conflictedFilesSelected,
+        repository: this.props.repository,
+        context,
+      })
+      return false
+    }
+
     return this.props.dispatcher.commitIncludedChanges(
       this.props.repository,
-      summary,
-      description,
-      trailers
+      context
     )
   }
 
@@ -309,7 +364,7 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
           branch={this.props.branch}
           gitHubUser={user}
           commitMessage={this.props.changes.commitMessage}
-          contextualCommitMessage={this.props.changes.contextualCommitMessage}
+          focusCommitMessage={this.props.focusCommitMessage}
           autocompletionProviders={this.autocompletionProviders!}
           availableWidth={this.props.availableWidth}
           onIgnore={this.onIgnore}
@@ -318,6 +373,8 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
           coAuthors={this.props.changes.coAuthors}
           externalEditorLabel={this.props.externalEditorLabel}
           onOpenInExternalEditor={this.props.onOpenInExternalEditor}
+          onChangesListScrolled={this.props.onChangesListScrolled}
+          changesListScrollTop={this.props.changesListScrollTop}
         />
         {this.renderMostRecentLocalCommit()}
       </div>

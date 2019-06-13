@@ -32,6 +32,8 @@ import { Shell } from './shells'
 import { ComparisonCache } from './comparison-cache'
 
 import { ApplicationTheme } from '../ui/lib/application-theme'
+import { IAccountRepositories } from './stores/api-repositories-store'
+import { ManualConflictResolution } from '../models/manual-conflict-resolution'
 
 export enum SelectionType {
   Repository,
@@ -94,6 +96,7 @@ export interface IAppState {
   readonly appIsFocused: boolean
 
   readonly showWelcomeFlow: boolean
+  readonly focusCommitMessage: boolean
   readonly currentPopup: Popup | null
   readonly currentFoldout: Foldout | null
 
@@ -154,6 +157,9 @@ export interface IAppState {
   /** Whether we should show the merge success banner */
   readonly successfulMergeBannerState: SuccessfulMergeBannerState
 
+  /** Whether we should show the merge success banner */
+  readonly mergeConflictsBannerState: MergeConflictsBannerState
+
   /** Whether we should show a confirmation dialog */
   readonly askForConfirmationOnRepositoryRemoval: boolean
 
@@ -162,6 +168,16 @@ export interface IAppState {
 
   /** The external editor to use when opening repositories */
   readonly selectedExternalEditor?: ExternalEditor
+
+  /**
+   * A cached entry representing an external editor found on the user's machine:
+   *
+   *  - If the `selectedExternalEditor` can be found, choose that
+   *  - Otherwise, if any editors found, this will be set to the first value
+   *    based on the search order in `app/src/lib/editors/{platform}.ts`
+   *  - If no editors found, this will remain `null`
+   */
+  readonly resolvedExternalEditor: ExternalEditor | null
 
   /** What type of visual diff mode we should use to compare images */
   readonly imageDiffType: ImageDiffType
@@ -180,6 +196,25 @@ export interface IAppState {
 
   /** The currently selected appearance (aka theme) */
   readonly selectedTheme: ApplicationTheme
+
+  /** Whether we should automatically change the currently selected appearance (aka theme) */
+  readonly automaticallySwitchTheme: boolean
+
+  /**
+   * A map keyed on a user account (GitHub.com or GitHub Enterprise)
+   * containing an object with repositories that the authenticated
+   * user has explicit permission (:read, :write, or :admin) to access
+   * as well as information about whether the list of repositories
+   * is currently being loaded or not.
+   *
+   * If a currently signed in account is missing from the map that
+   * means that the list of accessible repositories has not yet been
+   * loaded. An entry for an account with an empty list of repositories
+   * means that no accessible repositories was found for the account.
+   *
+   * See the ApiRepositoriesStore for more details on loading repositories
+   */
+  readonly apiRepositories: ReadonlyMap<Account, IAccountRepositories>
 }
 
 export enum FoldoutType {
@@ -223,8 +258,10 @@ export enum RepositorySectionTab {
 /**
  * Stores information about a merge conflict when it occurs
  */
-interface IConflictState {
-  readonly branch: Branch
+export interface IConflictState {
+  readonly currentBranch: string
+  readonly currentTip: string
+  readonly manualResolutions: Map<string, ManualConflictResolution>
 }
 
 export interface IRepositoryState {
@@ -265,7 +302,7 @@ export interface IRepositoryState {
   /** The state of the current branch in relation to its upstream. */
   readonly aheadBehind: IAheadBehind | null
 
-  /** Is a push/pull/update in progress? */
+  /** Is a push/pull/fetch in progress? */
   readonly isPushPullFetchInProgress: boolean
 
   /** Is a commit in progress? */
@@ -298,6 +335,12 @@ export interface IRepositoryState {
    * null if no such operation is in flight.
    */
   readonly revertProgress: IRevertProgress | null
+
+  /** The current branch filter text. */
+  readonly branchFilterText: string
+
+  /** The current pull request filter text. */
+  readonly pullRequestFilterText: string
 }
 
 export interface IBranchesState {
@@ -363,14 +406,8 @@ export interface IChangesState {
 
   readonly diff: IDiff | null
 
-  /**
-   * The commit message to use based on the context of the repository, e.g., the
-   * message from a recently undone commit.
-   */
-  readonly contextualCommitMessage: ICommitMessage | null
-
   /** The commit message for a work-in-progress commit in the changes view. */
-  readonly commitMessage: ICommitMessage | null
+  readonly commitMessage: ICommitMessage
 
   /**
    * Whether or not to show a field for adding co-authors to
@@ -530,7 +567,22 @@ export interface ICompareToBranch {
  */
 export type CompareAction = IViewHistory | ICompareToBranch
 
+/** State for displaying the sucessful merge banner
+ * `null` to remove banner
+ */
 export type SuccessfulMergeBannerState = {
-  currentBranch: string
-  theirBranch: string
+  /** name of the branch that was merged into */
+  ourBranch: string
+  /** name of the branch we merged into `ourBranch` */
+  theirBranch?: string
+} | null
+
+/** State for displaying the merge conflicts banner
+ *  `null` to remove banner
+ */
+export type MergeConflictsBannerState = {
+  /** name of the branch that is being merged into */
+  readonly ourBranch: string
+  /** popup to be shown from the banner */
+  readonly popup: Popup
 } | null

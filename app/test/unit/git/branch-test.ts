@@ -72,6 +72,7 @@ describe('git/branch', () => {
       expect(onBranch.branch.tip.sha).toEqual(
         'dfa96676b65e1c0ed43ca25492252a5e384c8efd'
       )
+      expect(onBranch.branch.tip.shortSha).toEqual('dfa9667')
     })
 
     it('returns non-origin remote', async () => {
@@ -117,14 +118,20 @@ describe('git/branch', () => {
       it('finds one branch name', async () => {
         const branches = await getBranchesPointedAt(repository, 'HEAD')
         expect(branches).toHaveLength(1)
-        expect(branches[0]).toEqual('master')
+        expect(branches![0]).toEqual('master')
       })
 
       it('finds no branch names', async () => {
         const branches = await getBranchesPointedAt(repository, 'HEAD^')
         expect(branches).toHaveLength(0)
       })
+
+      it('returns null on a malformed committish', async () => {
+        const branches = await getBranchesPointedAt(repository, 'MERGE_HEAD')
+        expect(branches).toBeNull()
+      })
     })
+
     describe('in a repo with identical branches', () => {
       beforeEach(async () => {
         const path = await setupFixtureRepository('repo-with-multiple-remotes')

@@ -12,7 +12,7 @@ import {
 import { CommitList } from './commit-list'
 import { Repository } from '../../models/repository'
 import { Branch } from '../../models/branch'
-import { Dispatcher } from '../../lib/dispatcher'
+import { Dispatcher } from '../dispatcher'
 import { ThrottledScheduler } from '../lib/throttled-scheduler'
 import { BranchList } from '../branches'
 import { TextBox } from '../lib/text-box'
@@ -28,11 +28,6 @@ import {
   NewCommitsBanner,
   DismissalReason,
 } from '../notification/new-commits-banner'
-import {
-  enableNotificationOfBranchUpdates,
-  enableMergeConflictDetection,
-} from '../../lib/feature-flag'
-import { MergeCallToAction } from './merge-call-to-action'
 import { MergeCallToActionWithConflicts } from './merge-call-to-action-with-conflicts'
 
 interface ICompareSidebarProps {
@@ -47,6 +42,8 @@ interface ICompareSidebarProps {
   readonly selectedCommitSha: string | null
   readonly onRevertCommit: (commit: Commit) => void
   readonly onViewCommitOnGitHub: (sha: string) => void
+  readonly onCompareListScrolled: (scrollTop: number) => void
+  readonly compareListScrollTop: number
 }
 
 interface ICompareSidebarState {
@@ -90,24 +87,6 @@ export class CompareSidebar extends React.Component<
     const newFormState = nextProps.compareState.formState
     const oldFormState = this.props.compareState.formState
 
-    if (this.textbox !== null) {
-      if (
-        !this.props.compareState.showBranchList &&
-        nextProps.compareState.showBranchList
-      ) {
-        // showBranchList changes from false -> true
-        //  -> ensure the textbox has focus
-        this.textbox.focus()
-      } else if (
-        this.props.compareState.showBranchList &&
-        !nextProps.compareState.showBranchList
-      ) {
-        // showBranchList changes from true -> false
-        //  -> ensure the textbox no longer has focus
-        this.textbox.blur()
-      }
-    }
-
     if (
       newFormState.kind !== oldFormState.kind &&
       newFormState.kind === HistoryTabMode.History
@@ -130,6 +109,18 @@ export class CompareSidebar extends React.Component<
         this.setState({
           focusedBranch: newBranch,
         })
+      }
+    }
+  }
+
+  public componentDidUpdate(prevProps: ICompareSidebarProps) {
+    const { showBranchList } = this.props.compareState
+
+    if (this.textbox !== null) {
+      if (showBranchList) {
+        this.textbox.focus()
+      } else if (!showBranchList) {
+        this.textbox.blur()
       }
     }
   }
@@ -190,10 +181,6 @@ export class CompareSidebar extends React.Component<
   }
 
   private renderNotificationBanner() {
-    if (!enableNotificationOfBranchUpdates()) {
-      return null
-    }
-
     if (!this.props.compareState.isDivergingBranchBannerVisible) {
       return null
     }
@@ -277,6 +264,8 @@ export class CompareSidebar extends React.Component<
         onCommitSelected={this.onCommitSelected}
         onScroll={this.onScroll}
         emptyListMessage={emptyListMessage}
+        onCompareListScrolled={this.props.onCompareListScrolled}
+        compareListScrollTop={this.props.compareListScrollTop}
       />
     )
   }
@@ -323,18 +312,6 @@ export class CompareSidebar extends React.Component<
   private renderMergeCallToAction(formState: ICompareBranch) {
     if (this.props.currentBranch == null) {
       return null
-    }
-
-    if (!enableMergeConflictDetection()) {
-      return (
-        <MergeCallToAction
-          repository={this.props.repository}
-          dispatcher={this.props.dispatcher}
-          currentBranch={this.props.currentBranch}
-          formState={formState}
-          onMerged={this.onMerge}
-        />
-      )
     }
 
     return (

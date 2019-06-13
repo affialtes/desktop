@@ -2,14 +2,14 @@ import * as React from 'react'
 import * as Path from 'path'
 
 import { IGitHubUser } from '../../lib/databases'
-import { Dispatcher } from '../../lib/dispatcher'
-import { ITrailer } from '../../lib/git/interpret-trailers'
+import { Dispatcher } from '../dispatcher'
 import { IMenuItem } from '../../lib/menu-item'
 import { revealInFileManager } from '../../lib/app-shell'
 import {
   AppFileStatus,
   WorkingDirectoryStatus,
   WorkingDirectoryFileChange,
+  AppFileStatusKind,
 } from '../../models/status'
 import { DiffSelectionType } from '../../models/diff'
 import { CommitIdentity } from '../../models/commit-identity'
@@ -32,6 +32,7 @@ import { showContextualMenu } from '../main-process-proxy'
 import { arrayEquals } from '../../lib/equality'
 import { clipboard } from 'electron'
 import { basename } from 'path'
+import { ICommitContext } from '../../models/commit'
 
 const RowHeight = 29
 
@@ -44,17 +45,20 @@ interface IChangesListProps {
   readonly onFileSelectionChanged: (rows: ReadonlyArray<number>) => void
   readonly onIncludeChanged: (path: string, include: boolean) => void
   readonly onSelectAll: (selectAll: boolean) => void
-  readonly onCreateCommit: (
-    summary: string,
-    description: string | null,
-    trailers?: ReadonlyArray<ITrailer>
-  ) => Promise<boolean>
+  readonly onCreateCommit: (context: ICommitContext) => Promise<boolean>
   readonly onDiscardChanges: (file: WorkingDirectoryFileChange) => void
   readonly askForConfirmationOnDiscardChanges: boolean
+  readonly focusCommitMessage: boolean
   readonly onDiscardAllChanges: (
     files: ReadonlyArray<WorkingDirectoryFileChange>,
     isDiscardingAllChanges?: boolean
   ) => void
+
+  /** Callback that fires on page scroll to pass the new scrollTop location */
+  readonly onChangesListScrolled: (scrollTop: number) => void
+
+  /* The scrollTop of the compareList. It is stored to allow for scroll position persistence */
+  readonly changesListScrollTop: number
 
   /**
    * Called to open a file it its default application
@@ -73,8 +77,7 @@ interface IChangesListProps {
    * List Props for documentation.
    */
   readonly onRowClick?: (row: number, source: ClickSource) => void
-  readonly commitMessage: ICommitMessage | null
-  readonly contextualCommitMessage: ICommitMessage | null
+  readonly commitMessage: ICommitMessage
 
   /** The autocompletion providers available to the repository. */
   readonly autocompletionProviders: ReadonlyArray<IAutocompletionProvider<any>>
@@ -166,15 +169,14 @@ export class ChangesList extends React.Component<
       selection === DiffSelectionType.All
         ? true
         : selection === DiffSelectionType.None
-          ? false
-          : null
+        ? false
+        : null
 
     return (
       <ChangedFile
         id={file.id}
         path={file.path}
         status={file.status}
-        oldPath={file.oldPath}
         include={includeAll}
         key={file.id}
         onContextMenu={this.onItemContextMenu}
@@ -238,8 +240,8 @@ export class ChangesList extends React.Component<
           ? `Discard Changes`
           : `Discard changes`
         : __DARWIN__
-          ? `Discard ${files.length} Selected Changes`
-          : `Discard ${files.length} selected changes`
+        ? `Discard ${files.length} Selected Changes`
+        : `Discard ${files.length} selected changes`
 
     return this.props.askForConfirmationOnDiscardChanges ? `${label}…` : label
   }
@@ -311,16 +313,19 @@ export class ChangesList extends React.Component<
       },
       { type: 'separator' },
     ]
-
     if (paths.length === 1) {
       items.push({
-        label: __DARWIN__ ? 'Ignore File' : 'Ignore file',
+        label: __DARWIN__
+          ? 'Ignore File (Add to .gitignore)'
+          : 'Ignore file (add to .gitignore)',
         action: () => this.props.onIgnore(path),
         enabled: Path.basename(path) !== GitIgnoreFileName,
       })
     } else if (paths.length > 1) {
       items.push({
-        label: `Ignore ${paths.length} selected files`,
+        label: __DARWIN__
+          ? `Ignore ${paths.length} Selected Files (Add to .gitignore)`
+          : `Ignore ${paths.length} selected files (add to .gitignore)`,
         action: () => {
           // Filter out any .gitignores that happens to be selected, ignoring
           // those doesn't make sense.
@@ -333,15 +338,14 @@ export class ChangesList extends React.Component<
         enabled: paths.some(path => Path.basename(path) !== GitIgnoreFileName),
       })
     }
-
     // Five menu items should be enough for everyone
     Array.from(extensions)
       .slice(0, 5)
       .forEach(extension => {
         items.push({
           label: __DARWIN__
-            ? `Ignore All ${extension} Files`
-            : `Ignore all ${extension} files`,
+            ? `Ignore All ${extension} Files (Add to .gitignore)`
+            : `Ignore all ${extension} files (add to .gitignore)`,
           action: () => this.props.onIgnore(`*${extension}`),
         })
       })
@@ -358,7 +362,7 @@ export class ChangesList extends React.Component<
       {
         label: RevealInFileManagerLabel,
         action: () => revealInFileManager(this.props.repository, path),
-        enabled: status !== AppFileStatus.Deleted,
+        enabled: status.kind !== AppFileStatusKind.Deleted,
       },
       {
         label: openInExternalEditor,
@@ -366,12 +370,12 @@ export class ChangesList extends React.Component<
           const fullPath = Path.join(this.props.repository.path, path)
           this.props.onOpenInExternalEditor(fullPath)
         },
-        enabled: isSafeExtension && status !== AppFileStatus.Deleted,
+        enabled: isSafeExtension && status.kind !== AppFileStatusKind.Deleted,
       },
       {
         label: OpenWithDefaultProgramLabel,
         action: () => this.props.onOpenItem(path),
-        enabled: isSafeExtension && status !== AppFileStatus.Deleted,
+        enabled: isSafeExtension && status.kind !== AppFileStatusKind.Deleted,
       }
     )
 
@@ -389,10 +393,11 @@ export class ChangesList extends React.Component<
     const firstFile = files[0]
     const fileName = basename(firstFile.path)
 
-    switch (firstFile.status) {
-      case AppFileStatus.New:
+    switch (firstFile.status.kind) {
+      case AppFileStatusKind.New:
+      case AppFileStatusKind.Untracked:
         return `Create ${fileName}`
-      case AppFileStatus.Deleted:
+      case AppFileStatusKind.Deleted:
         return `Delete ${fileName}`
       default:
         // TODO:
@@ -401,6 +406,10 @@ export class ChangesList extends React.Component<
         // affects other parts of the flow) we can just default to this for now
         return `Update ${fileName}`
     }
+  }
+
+  private onScroll = (scrollTop: number, clientHeight: number) => {
+    this.props.onChangesListScrolled(scrollTop)
   }
 
   public render() {
@@ -436,6 +445,8 @@ export class ChangesList extends React.Component<
           onSelectionChanged={this.props.onFileSelectionChanged}
           invalidationProps={this.props.workingDirectory}
           onRowClick={this.props.onRowClick}
+          onScroll={this.onScroll}
+          setScrollTop={this.props.changesListScrollTop}
         />
 
         <CommitMessage
@@ -447,7 +458,7 @@ export class ChangesList extends React.Component<
           repository={this.props.repository}
           dispatcher={this.props.dispatcher}
           commitMessage={this.props.commitMessage}
-          contextualCommitMessage={this.props.contextualCommitMessage}
+          focusCommitMessage={this.props.focusCommitMessage}
           autocompletionProviders={this.props.autocompletionProviders}
           isCommitting={this.props.isCommitting}
           showCoAuthoredBy={this.props.showCoAuthoredBy}
@@ -457,6 +468,7 @@ export class ChangesList extends React.Component<
             singleFileCommit
           )}
           singleFileCommit={singleFileCommit}
+          key={this.props.repository.id}
         />
       </div>
     )

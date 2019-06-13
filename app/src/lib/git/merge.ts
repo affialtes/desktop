@@ -1,4 +1,8 @@
+import * as FSE from 'fs-extra'
+import * as Path from 'path'
+
 import { git } from './core'
+import { GitError } from 'dugite'
 import { Repository } from '../../models/repository'
 import { Branch } from '../../models/branch'
 import { MergeResult, MergeResultKind } from '../../models/merge'
@@ -9,10 +13,24 @@ import { spawnAndComplete } from './spawn'
 export async function merge(
   repository: Repository,
   branch: string
-): Promise<true> {
-  await git(['merge', branch], repository.path, 'merge')
-  return true
+): Promise<boolean> {
+  const { exitCode, stdout } = await git(
+    ['merge', branch],
+    repository.path,
+    'merge',
+    {
+      expectedErrors: new Set([GitError.MergeConflicts]),
+    }
+  )
+
+  if (exitCode === 0 && stdout !== noopMergeMessage) {
+    return true
+  } else {
+    return false
+  }
 }
+
+const noopMergeMessage = 'Already up to date.\n'
 
 /**
  * Find the base commit between two commit-ish identifiers
@@ -89,4 +107,13 @@ export async function mergeTree(
  */
 export async function abortMerge(repository: Repository): Promise<void> {
   await git(['merge', '--abort'], repository.path, 'abortMerge')
+}
+
+/**
+ * Check the `.git/MERGE_HEAD` file exists in a repository to confirm
+ * that it is in a conflicted state.
+ */
+export async function isMergeHeadSet(repository: Repository): Promise<boolean> {
+  const path = Path.join(repository.path, '.git', 'MERGE_HEAD')
+  return FSE.pathExists(path)
 }
