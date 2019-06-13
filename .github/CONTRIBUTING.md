@@ -58,7 +58,7 @@ reports :mag_right:.
 Before creating bug reports, please check [this list](#before-submitting-a-bug-report)
 as you might find out that you don't need to create one. When you are creating
 a bug report, please [include as many details as possible](#how-do-i-submit-a-good-bug-report).
-Fill out [the required template](ISSUE_TEMPLATE.md), the information
+Fill out [the required template](ISSUE_TEMPLATE/bug_report.md), the information
 it asks for helps us resolve issues faster.
 
 #### Before Submitting A Bug Report
@@ -80,7 +80,7 @@ The information we are interested in includes:
  - details about your environment - which build, which operating system
  - details about reproducing the issue - what steps to take, what happens, how
    often it happens
- - other relevant information - log files, screenshots, etc.
+ - other relevant information - log files, screenshots, etc
 
 ### Suggesting Enhancements
 
@@ -93,7 +93,7 @@ community understand your suggestion :pencil: and find related suggestions
 Before creating enhancement suggestions, please check [this list](#before-submitting-an-enhancement-suggestion)
 as you might find out that you don't need to create one. When you are creating
 an enhancement suggestion, please [include as many details as possible](#how-do-i-submit-a-good-enhancement-suggestion).
-Fill in [the template](ISSUE_TEMPLATE.md), including the steps
+Fill in [the template](ISSUE_TEMPLATE/problem-to-raise.md), including the steps
 that you imagine you would take if the feature you're requesting existed.
 
 #### Before Submitting An Enhancement Suggestion
@@ -112,16 +112,16 @@ and fill out the provided issue template.
 
 Some additional advice:
 
-* **Use a clear and descriptive title** for the feature request.
-* **Provide a step-by-step description of the suggested enhancement**.
+* **Use a clear and descriptive title** for the feature request
+* **Provide a step-by-step description of the suggested enhancement**
   This additional context helps the maintainers understand the enhancement from
   your perspective
-* **Explain why this enhancement would be useful** to GitHub Desktop users.
+* **Explain why this enhancement would be useful** to GitHub Desktop users
 * **Include screenshots and animated GIFs** if relevant to help you demonstrate
   the steps or point out the part of GitHub Desktop which the suggestion is
   related to. You can use [this tool](http://www.cockos.com/licecap/) to record
-  GIFs on macOS and Windows.
-* **List some other applications where this enhancement exists, if applicable.**
+  GIFs on macOS and Windows
+* **List some other applications where this enhancement exists, if applicable**
 
 ### Help Wanted
 
@@ -138,6 +138,10 @@ in the repository. If you are interested in contributing to the project, please
 comment on the issue to let the core team (and the community) know you are
 interested in the issue.
 
+### Set Up Your Machine
+
+Start [here](https://github.com/desktop/desktop/blob/master/docs/contributing/setup.md).
+
 ## Additional Notes
 
 ### Issue and Pull Request Labels
@@ -149,27 +153,30 @@ pull requests.
 
 | Label name | :mag_right: | Description |
 | --- | --- | --- |
-| `enhancement` | [search](https://github.com/desktop/desktop/labels/enhancement) | Feature requests. |
-| `bug` | [search](https://github.com/desktop/desktop/labels/bug)  | Confirmed bugs or reports that are very likely to be bugs. |
-| `more-information-needed` | [search](https://github.com/desktop/desktop/labels/more-information-needed) | More information needs to be collected about these problems or feature requests (e.g. steps to reproduce). |
-| `reviewer-needs-to-reproduce` | [search](https://github.com/desktop/desktop/labels/reviewer-needs-to-reproduce)  | Likely bugs, but haven't been reliably reproduced by a reviewer. |
-| `stale` | [search](https://github.com/desktop/desktop/labels/stale) | Issues that are inactive and marked to be closed. |
-| `macOS` | [search](https://github.com/desktop/desktop/labels/macOS)  | Issues specific to macOS users. |
-| `Windows` | [search](https://github.com/desktop/desktop/labels/Windows)  | Issues specific to Windows users. |
-| `codemirror` | [search](https://github.com/desktop/desktop/labels/codemirror)  | Issues related to our use of [CodeMirror](https://codemirror.net/) that may require upstream fixes. |
-| `electron` | [search](https://github.com/desktop/desktop/labels/electron) | Issues related to our use of [Electron](https://electron.atom.io) that may require upstream fixes. |
+| `enhancement` | [search](https://github.com/desktop/desktop/labels/enhancement) | Feature requests |
+| `bug` | [search](https://github.com/desktop/desktop/labels/bug)  | Confirmed bugs or reports that are very likely to be bugs |
+| `more-information-needed` | [search](https://github.com/desktop/desktop/labels/more-information-needed) | More information needs to be collected about these problems or feature requests (e.g. steps to reproduce) |
+| `reviewer-needs-to-reproduce` | [search](https://github.com/desktop/desktop/labels/reviewer-needs-to-reproduce)  | Potential bugs that still need to be reliably reproduced by a reviewer |
+| `stale` | [search](https://github.com/desktop/desktop/labels/stale) | Issues that are inactive and marked to be closed |
+| `macOS` | [search](https://github.com/desktop/desktop/labels/macOS)  | Issues specific to macOS users |
+| `Windows` | [search](https://github.com/desktop/desktop/labels/Windows)  | Issues specific to Windows users |
+| `codemirror` | [search](https://github.com/desktop/desktop/labels/codemirror)  | Issues related to our use of [CodeMirror](https://codemirror.net/) that may require upstream fixes |
+| `electron` | [search](https://github.com/desktop/desktop/labels/electron) | Issues related to our use of [Electron](https://electron.atom.io) that may require upstream fixes |
+| `themes` | [search](https://github.com/desktop/desktop/labels/themes) | Issues related the light or dark themes that ship in Desktop |
+| `user-research` | [search](https://github.com/desktop/desktop/labels/user-research) | Issues that might benefit from user interviews, validations, and/or usability testing |
+| `integrations` | [search](https://github.com/desktop/desktop/labels/integrations) | Issues related to editor and shell integrations that ship in Desktop |
 
 #### Topics
 
 | Label name | :mag_right: | Description |
 | --- | --- | --- |
-| `help wanted` | [search](https://github.com/desktop/desktop/labels/help%20wanted)  | Issues marked as ideal for external contributors. |
-| `tech-debt` | [search](https://github.com/desktop/desktop/labels/tech-debt) | Issues related to code or architecture decisions. |
-| `needs-design-input` | [search](https://github.com/desktop/desktop/labels/needs-design-input)  | Issues that require design input from the core team before the work can be started. |
+| `help wanted` | [search](https://github.com/desktop/desktop/labels/help%20wanted)  | Issues marked as ideal for external contributors |
+| `tech-debt` | [search](https://github.com/desktop/desktop/labels/tech-debt) | Issues related to code or architecture decisions |
+| `needs-design-input` | [search](https://github.com/desktop/desktop/labels/needs-design-input)  | Issues that require design input from the core team before the work can be started |
 
 #### Workflow
 
 | Label name | :mag_right: | Description |
 | --- | --- | --- |
-| `infrastructure` | [search](https://github.com/desktop/desktop/labels/infrastructure) | Pull requests not related to the core application - documentation, dependencies, tooling, etc. |
-| `ready-for-review` | [search](https://github.com/desktop/desktop/labels/ready-for-review)  | Pull Requests that are ready to be reviewed by the maintainers. |
+| `infrastructure` | [search](https://github.com/desktop/desktop/labels/infrastructure) | Pull requests not related to the core application - documentation, dependencies, tooling, etc |
+| `ready-for-review` | [search](https://github.com/desktop/desktop/labels/ready-for-review)  | Pull Requests that are ready to be reviewed by the maintainers |

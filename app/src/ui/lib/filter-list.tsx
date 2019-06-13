@@ -103,6 +103,11 @@ interface IFilterListProps<T extends IFilterListItem> {
    * make this more composable which should make this unnecessary.
    */
   readonly filterTextBox?: TextBox
+
+  /**
+   * Callback to fire when the items in the filter list are updated
+   */
+  readonly onFilterListResultsChanged?: (resultCount: number) => void
 }
 
 interface IFilterListState<T extends IFilterListItem> {
@@ -177,6 +182,13 @@ export class FilterList<T extends IFilterListItem> extends React.Component<
           })
         }
       }
+    }
+
+    if (this.props.onFilterListResultsChanged !== undefined) {
+      const itemCount = this.state.rows.filter(row => row.kind === 'item')
+        .length
+
+      this.props.onFilterListResultsChanged(itemCount)
     }
   }
 

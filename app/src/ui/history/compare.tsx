@@ -1,19 +1,20 @@
 import * as React from 'react'
+import { CSSTransitionGroup } from 'react-transition-group'
+
 import { IGitHubUser } from '../../lib/databases'
 import { Commit } from '../../models/commit'
 import { IMatches } from '../../models/filter-list'
 import {
-  ComparisonView,
+  HistoryTabMode,
   ICompareState,
-  CompareActionKind,
   ICompareBranch,
+  ComparisonMode,
 } from '../../lib/app-state'
 import { CommitList } from './commit-list'
 import { Repository } from '../../models/repository'
 import { Branch } from '../../models/branch'
 import { Dispatcher } from '../../lib/dispatcher'
 import { ThrottledScheduler } from '../lib/throttled-scheduler'
-import { Button } from '../lib/button'
 import { BranchList } from '../branches'
 import { TextBox } from '../lib/text-box'
 import { IBranchListItem } from '../branches/group-branches'
@@ -24,6 +25,16 @@ import { OcticonSymbol } from '../octicons'
 import { SelectionSource } from '../lib/filter-list'
 
 import { Ref } from '../lib/ref'
+import {
+  NewCommitsBanner,
+  DismissalReason,
+} from '../notification/new-commits-banner'
+import {
+  enableNotificationOfBranchUpdates,
+  enableMergeConflictDetection,
+} from '../../lib/feature-flag'
+import { MergeCallToAction } from './merge-call-to-action'
+import { MergeCallToActionWithConflicts } from './merge-call-to-action-with-conflicts'
 
 interface ICompareSidebarProps {
   readonly repository: Repository
@@ -34,6 +45,7 @@ interface ICompareSidebarProps {
   readonly localCommitSHAs: ReadonlyArray<string>
   readonly dispatcher: Dispatcher
   readonly currentBranch: Branch | null
+  readonly selectedCommitSha: string | null
   readonly onRevertCommit: (commit: Commit) => void
   readonly onViewCommitOnGitHub: (sha: string) => void
 }
@@ -45,7 +57,12 @@ interface ICompareSidebarState {
    * For all other cases, use the prop
    */
   readonly focusedBranch: Branch | null
-  readonly selectedCommit: Commit | null
+
+  /**
+   * Flag that tracks whether the user interacted with one of the notification's
+   * "call to action" buttons
+   */
+  readonly hasConsumedNotification: boolean
 }
 
 /** If we're within this many rows from the bottom, load the next history batch. */
@@ -58,13 +75,15 @@ export class CompareSidebar extends React.Component<
   private textbox: TextBox | null = null
   private readonly loadChangedFilesScheduler = new ThrottledScheduler(200)
   private branchList: BranchList | null = null
+  private loadingMoreCommitsPromise: Promise<void> | null = null
+  private resultCount = 0
 
   public constructor(props: ICompareSidebarProps) {
     super(props)
 
     this.state = {
       focusedBranch: null,
-      selectedCommit: null,
+      hasConsumedNotification: false,
     }
   }
 
@@ -92,7 +111,7 @@ export class CompareSidebar extends React.Component<
 
     if (
       newFormState.kind !== oldFormState.kind &&
-      newFormState.kind === ComparisonView.None
+      newFormState.kind === HistoryTabMode.History
     ) {
       this.setState({
         focusedBranch: null,
@@ -101,8 +120,8 @@ export class CompareSidebar extends React.Component<
     }
 
     if (
-      newFormState.kind !== ComparisonView.None &&
-      oldFormState.kind !== ComparisonView.None
+      newFormState.kind !== HistoryTabMode.History &&
+      oldFormState.kind !== HistoryTabMode.History
     ) {
       const oldBranch = oldFormState.comparisonBranch
       const newBranch = newFormState.comparisonBranch
@@ -122,14 +141,31 @@ export class CompareSidebar extends React.Component<
 
   public componentWillUnmount() {
     this.textbox = null
+
+    // by hiding the branch list here when the component is torn down
+    // we ensure any ahead/behind computation work is discarded
+    this.props.dispatcher.updateCompareForm(this.props.repository, {
+      showBranchList: false,
+    })
   }
 
   public render() {
     const { allBranches, filterText, showBranchList } = this.props.compareState
     const placeholderText = getPlaceholderText(this.props.compareState)
+    const DivergingBannerAnimationTimeout = 300
 
     return (
       <div id="compare-view">
+        <CSSTransitionGroup
+          transitionName="diverge-banner"
+          transitionAppear={true}
+          transitionAppearTimeout={DivergingBannerAnimationTimeout}
+          transitionEnterTimeout={DivergingBannerAnimationTimeout}
+          transitionLeaveTimeout={DivergingBannerAnimationTimeout}
+        >
+          {this.renderNotificationBanner()}
+        </CSSTransitionGroup>
+
         <div className="compare-form">
           <FancyTextBox
             symbol={OcticonSymbol.gitBranch}
@@ -137,7 +173,7 @@ export class CompareSidebar extends React.Component<
             placeholder={placeholderText}
             onFocus={this.onTextBoxFocused}
             value={filterText}
-            disabled={allBranches.length <= 1}
+            disabled={allBranches.length === 0}
             onRef={this.onTextBoxRef}
             onValueChanged={this.onBranchFilterTextChanged}
             onKeyDown={this.onBranchFilterKeyDown}
@@ -154,20 +190,50 @@ export class CompareSidebar extends React.Component<
     this.branchList = branchList
   }
 
+  private renderNotificationBanner() {
+    if (!enableNotificationOfBranchUpdates()) {
+      return null
+    }
+
+    if (!this.props.compareState.isDivergingBranchBannerVisible) {
+      return null
+    }
+
+    const { inferredComparisonBranch } = this.props.compareState
+
+    return inferredComparisonBranch.branch !== null &&
+      inferredComparisonBranch.aheadBehind !== null &&
+      inferredComparisonBranch.aheadBehind.behind > 0 ? (
+      <div className="diverge-banner-wrapper">
+        <NewCommitsBanner
+          dispatcher={this.props.dispatcher}
+          repository={this.props.repository}
+          commitsBehindBaseBranch={inferredComparisonBranch.aheadBehind.behind}
+          baseBranch={inferredComparisonBranch.branch}
+          onDismiss={this.onNotificationBannerDismissed}
+        />
+      </div>
+    ) : null
+  }
+
   private renderCommits() {
     const formState = this.props.compareState.formState
     return (
       <div className="compare-commit-list">
-        {formState.kind === ComparisonView.None
+        {formState.kind === HistoryTabMode.History
           ? this.renderCommitList()
           : this.renderTabBar(formState)}
       </div>
     )
   }
 
+  private filterListResultsChanged = (resultCount: number) => {
+    this.resultCount = resultCount
+  }
+
   private viewHistoryForBranch = () => {
     this.props.dispatcher.executeCompare(this.props.repository, {
-      kind: CompareActionKind.History,
+      kind: HistoryTabMode.History,
     })
 
     this.props.dispatcher.updateCompareForm(this.props.repository, {
@@ -177,25 +243,23 @@ export class CompareSidebar extends React.Component<
 
   private renderCommitList() {
     const { formState, commitSHAs } = this.props.compareState
-    const selectedCommit = this.state.selectedCommit
 
     let emptyListMessage: string | JSX.Element
-    if (formState.kind === ComparisonView.None) {
+    if (formState.kind === HistoryTabMode.History) {
       emptyListMessage = 'No history'
     } else {
       const currentlyComparedBranchName = formState.comparisonBranch.name
 
       emptyListMessage =
-        formState.kind === ComparisonView.Ahead ? (
+        formState.comparisonMode === ComparisonMode.Ahead ? (
           <p>
             The compared branch (<Ref>{currentlyComparedBranchName}</Ref>) is up
             to date with your branch
           </p>
         ) : (
           <p>
-            Your branch is up to date with the compared branch (<Ref>
-              {currentlyComparedBranchName}
-            </Ref>)
+            Your branch is up to date with the compared branch (
+            <Ref>{currentlyComparedBranchName}</Ref>)
           </p>
         )
     }
@@ -205,7 +269,7 @@ export class CompareSidebar extends React.Component<
         gitHubRepository={this.props.repository.gitHubRepository}
         commitLookup={this.props.commitLookup}
         commitSHAs={commitSHAs}
-        selectedSHA={selectedCommit !== null ? selectedCommit.sha : null}
+        selectedSHA={this.props.selectedCommitSha}
         gitHubUsers={this.props.gitHubUsers}
         localCommitSHAs={this.props.localCommitSHAs}
         emoji={this.props.emoji}
@@ -218,13 +282,12 @@ export class CompareSidebar extends React.Component<
     )
   }
 
-  private renderActiveTab() {
-    const formState = this.props.compareState.formState
+  private renderActiveTab(view: ICompareBranch) {
     return (
       <div className="compare-commit-list">
         {this.renderCommitList()}
-        {formState.kind === ComparisonView.Behind
-          ? this.renderMergeCallToAction(formState)
+        {view.comparisonMode === ComparisonMode.Behind
+          ? this.renderMergeCallToAction(view)
           : null}
       </div>
     )
@@ -253,6 +316,7 @@ export class CompareSidebar extends React.Component<
         onItemClick={this.onBranchItemClicked}
         onFilterTextChanged={this.onBranchFilterTextChanged}
         renderBranch={this.renderCompareBranchListItem}
+        onFilterListResultsChanged={this.filterListResultsChanged}
       />
     )
   }
@@ -262,63 +326,52 @@ export class CompareSidebar extends React.Component<
       return null
     }
 
-    const count = formState.aheadBehind.behind
-
-    return (
-      <div className="merge-cta">
-        <Button
-          type="submit"
-          disabled={count <= 0}
-          onClick={this.onMergeClicked}
-        >
-          Merge into <strong>{this.props.currentBranch.name}</strong>
-        </Button>
-
-        {this.renderMergeDetails(formState, this.props.currentBranch)}
-      </div>
-    )
-  }
-
-  private renderMergeDetails(formState: ICompareBranch, currentBranch: Branch) {
-    const branch = formState.comparisonBranch
-    const count = formState.aheadBehind.behind
-
-    if (count > 0) {
-      const pluralized = count === 1 ? 'commit' : 'commits'
+    if (!enableMergeConflictDetection()) {
       return (
-        <div className="merge-message">
-          This will merge
-          <strong>{` ${count} ${pluralized}`}</strong>
-          {` `}from{` `}
-          <strong>{branch.name}</strong>
-          {` `}into{` `}
-          <strong>{currentBranch.name}</strong>
-        </div>
+        <MergeCallToAction
+          repository={this.props.repository}
+          dispatcher={this.props.dispatcher}
+          currentBranch={this.props.currentBranch}
+          formState={formState}
+          onMerged={this.onMerge}
+        />
       )
     }
 
-    return null
+    return (
+      <MergeCallToActionWithConflicts
+        repository={this.props.repository}
+        dispatcher={this.props.dispatcher}
+        mergeStatus={this.props.compareState.mergeStatus}
+        currentBranch={this.props.currentBranch}
+        comparisonBranch={formState.comparisonBranch}
+        commitsBehind={formState.aheadBehind.behind}
+        onMerged={this.onMerge}
+      />
+    )
   }
 
   private onTabClicked = (index: number) => {
     const formState = this.props.compareState.formState
 
-    if (formState.kind === ComparisonView.None) {
+    if (formState.kind === HistoryTabMode.History) {
       return
     }
 
-    const mode = index === 0 ? ComparisonView.Behind : ComparisonView.Ahead
+    const comparisonMode =
+      index === 0 ? ComparisonMode.Behind : ComparisonMode.Ahead
     const branch = formState.comparisonBranch
 
     this.props.dispatcher.executeCompare(this.props.repository, {
-      kind: CompareActionKind.Branch,
+      kind: HistoryTabMode.Compare,
       branch,
-      mode,
+      comparisonMode,
     })
   }
 
   private renderTabBar(formState: ICompareBranch) {
-    const selectedTab = formState.kind === ComparisonView.Behind ? 0 : 1
+    const selectedTab =
+      formState.comparisonMode === ComparisonMode.Behind ? 0 : 1
 
     return (
       <div className="compare-content">
@@ -326,7 +379,7 @@ export class CompareSidebar extends React.Component<
           <span>{`Behind (${formState.aheadBehind.behind})`}</span>
           <span>{`Ahead (${formState.aheadBehind.ahead})`}</span>
         </TabBar>
-        {this.renderActiveTab()}
+        {this.renderActiveTab(formState)}
       </div>
     )
   }
@@ -363,6 +416,11 @@ export class CompareSidebar extends React.Component<
     const key = event.key
 
     if (key === 'Enter') {
+      if (this.resultCount === 0) {
+        event.preventDefault()
+        return
+      }
+
       if (this.props.compareState.filterText.length === 0) {
         this.handleEscape()
       } else {
@@ -372,9 +430,9 @@ export class CompareSidebar extends React.Component<
           const branch = this.state.focusedBranch
 
           this.props.dispatcher.executeCompare(this.props.repository, {
-            kind: CompareActionKind.Branch,
+            kind: HistoryTabMode.Compare,
+            comparisonMode: ComparisonMode.Behind,
             branch,
-            mode: ComparisonView.Behind,
           })
 
           this.props.dispatcher.updateCompareForm(this.props.repository, {
@@ -403,7 +461,7 @@ export class CompareSidebar extends React.Component<
   }
 
   private onCommitSelected = (commit: Commit) => {
-    this.props.dispatcher.changeHistoryCommitSelection(
+    this.props.dispatcher.changeCommitSelection(
       this.props.repository,
       commit.sha
     )
@@ -413,15 +471,13 @@ export class CompareSidebar extends React.Component<
         this.props.repository
       )
     })
-
-    this.setState({ selectedCommit: commit })
   }
 
   private onScroll = (start: number, end: number) => {
     const compareState = this.props.compareState
     const formState = compareState.formState
 
-    if (formState.kind !== ComparisonView.None) {
+    if (formState.kind === HistoryTabMode.Compare) {
       // as the app is currently comparing the current branch to some other
       // branch, everything needed should be loaded
       return
@@ -429,27 +485,23 @@ export class CompareSidebar extends React.Component<
 
     const commits = compareState.commitSHAs
     if (commits.length - end <= CloseToBottomThreshold) {
-      this.props.dispatcher.loadNextHistoryBatch(this.props.repository)
+      if (this.loadingMoreCommitsPromise != null) {
+        // as this callback fires for any scroll event we need to guard
+        // against re-entrant calls to loadNextHistoryBatch
+        return
+      }
+
+      this.loadingMoreCommitsPromise = this.props.dispatcher
+        .loadNextCommitBatch(this.props.repository)
+        .then(() => {
+          // deferring unsetting this flag to some time _after_ the commits
+          // have been appended to prevent eagerly adding more commits due
+          // to scroll events (which fire indiscriminately)
+          window.setTimeout(() => {
+            this.loadingMoreCommitsPromise = null
+          }, 500)
+        })
     }
-  }
-
-  private onMergeClicked = async (event: React.MouseEvent<any>) => {
-    const formState = this.props.compareState.formState
-
-    if (formState.kind === ComparisonView.None) {
-      return
-    }
-
-    this.props.dispatcher.recordCompareInitiatedMerge()
-    await this.props.dispatcher.mergeBranch(
-      this.props.repository,
-      formState.comparisonBranch.name
-    )
-
-    await this.viewHistoryForBranch()
-    this.props.dispatcher.updateCompareForm(this.props.repository, {
-      filterText: '',
-    })
   }
 
   private onBranchFilterTextChanged = (filterText: string) => {
@@ -476,9 +528,9 @@ export class CompareSidebar extends React.Component<
 
   private onBranchItemClicked = (branch: Branch) => {
     this.props.dispatcher.executeCompare(this.props.repository, {
+      kind: HistoryTabMode.Compare,
+      comparisonMode: ComparisonMode.Behind,
       branch,
-      kind: CompareActionKind.Branch,
-      mode: ComparisonView.Behind,
     })
 
     this.setState({
@@ -497,9 +549,9 @@ export class CompareSidebar extends React.Component<
   ) => {
     if (source.kind === 'mouseclick' && branch != null) {
       this.props.dispatcher.executeCompare(this.props.repository, {
+        kind: HistoryTabMode.Compare,
+        comparisonMode: ComparisonMode.Behind,
         branch,
-        kind: CompareActionKind.Branch,
-        mode: ComparisonView.Behind,
       })
     }
 
@@ -517,14 +569,38 @@ export class CompareSidebar extends React.Component<
   private onTextBoxRef = (textbox: TextBox) => {
     this.textbox = textbox
   }
+
+  private onNotificationBannerDismissed = (reason: DismissalReason) => {
+    this.props.dispatcher.setDivergingBranchBannerVisibility(
+      this.props.repository,
+      false
+    )
+    this.props.dispatcher.recordDivergingBranchBannerDismissal()
+
+    switch (reason) {
+      case 'close':
+        this.setState({ hasConsumedNotification: false })
+        break
+      case 'compare':
+      case 'merge':
+        this.setState({ hasConsumedNotification: true })
+        break
+    }
+  }
+
+  private onMerge = () => {
+    if (this.state.hasConsumedNotification) {
+      this.props.dispatcher.recordDivergingBranchBannerInfluencedMerge()
+    }
+  }
 }
 
 function getPlaceholderText(state: ICompareState) {
   const { allBranches, formState } = state
 
-  if (allBranches.length <= 1) {
+  if (allBranches.length === 0) {
     return __DARWIN__ ? 'No Branches to Compare' : 'No branches to compare'
-  } else if (formState.kind === ComparisonView.None) {
+  } else if (formState.kind === HistoryTabMode.History) {
     return __DARWIN__
       ? 'Select Branch to Compare...'
       : 'Select branch to compare...'

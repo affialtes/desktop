@@ -58,6 +58,62 @@ export interface IDailyMeasures {
 
   /** The number of times the user checks out a branch using the PR menu */
   readonly prBranchCheckouts: number
+
+  /** The numbers of times a repo with indicators is clicked on repo list view */
+  readonly repoWithIndicatorClicked: number
+  /** The numbers of times a repo without indicators is clicked on repo list view */
+  readonly repoWithoutIndicatorClicked: number
+
+  /** The number of times the user dismisses the diverged branch notification */
+  readonly divergingBranchBannerDismissal: number
+
+  /** The number of times the user merges from the diverged branch notification merge CTA button */
+  readonly divergingBranchBannerInitatedMerge: number
+
+  /** The number of times the user compares from the diverged branch notification compare CTA button */
+  readonly divergingBranchBannerInitiatedCompare: number
+
+  /**
+   * The number of times the user merges from the compare view after getting to that state
+   * from the diverged branch notification compare CTA button
+   */
+  readonly divergingBranchBannerInfluencedMerge: number
+
+  /** The number of times the diverged branch notification is displayed */
+  readonly divergingBranchBannerDisplayed: number
+
+  /** The number of times the user pushes to GitHub.com */
+  readonly dotcomPushCount: number
+
+  /** The number of times the user pushed to a GitHub enterprise instance */
+  readonly enterprisePushCount: number
+
+  /** The number of times the users pushes to a generic remote */
+  readonly externalPushCount: number
+
+  /** The number of times the user merged before seeing the result of the merge hint */
+  readonly mergedWithLoadingHintCount: number
+
+  /** The number of times the user has merged after seeing the 'no conflicts' merge hint */
+  readonly mergedWithCleanMergeHintCount: number
+
+  /** The number of times the user has merged after seeing the 'you have XX conflicted files' warning */
+  readonly mergedWithConflictWarningHintCount: number
+
+  /** Whether or not the app has been interacted with during the current reporting window */
+  readonly active: boolean
+
+  /** The number of times a `git pull` initiated by Desktop resulted in a merge conflict for the user */
+  readonly mergeConflictFromPullCount: number
+
+  /** The number of times a `git merge` initiated by Desktop resulted in a merge conflict for the user */
+  readonly mergeConflictFromExplicitMergeCount: number
+
+  /** The number of times a conflicted merge was successfully completed by the user */
+  readonly mergeSuccessAfterConflictsCount: number
+
+  /** The number of times a conflicted merge was aborted by the user */
+  readonly mergeAbortedAfterConflictsCount: number
 }
 
 export class StatsDatabase extends Dexie {

@@ -17,14 +17,6 @@ import {
 } from './group-branches'
 import { NoBranches } from './no-branches'
 
-/**
- * TS can't parse generic specialization in JSX, so we have to alias it here
- * with the generic type. See https://github.com/Microsoft/TypeScript/issues/6395.
- */
-const BranchesFilterList: new () => FilterList<
-  IBranchListItem
-> = FilterList as any
-
 const RowHeight = 30
 
 interface IBranchListProps {
@@ -103,6 +95,11 @@ interface IBranchListProps {
     item: IBranchListItem,
     matches: IMatches
   ) => JSX.Element
+
+  /**
+   * Callback to fire when the items in the filter list are updated
+   */
+  readonly onFilterListResultsChanged?: (resultCount: number) => void
 }
 
 interface IBranchListState {
@@ -169,7 +166,7 @@ export class BranchList extends React.Component<
 
   public render() {
     return (
-      <BranchesFilterList
+      <FilterList<IBranchListItem>
         ref={this.onBranchesFilterListRef}
         className="branches-list"
         rowHeight={RowHeight}
@@ -186,6 +183,7 @@ export class BranchList extends React.Component<
         renderPostFilter={this.onRenderNewButton}
         renderNoItems={this.onRenderNoItems}
         filterTextBox={this.props.textbox}
+        onFilterListResultsChanged={this.props.onFilterListResultsChanged}
       />
     )
   }
