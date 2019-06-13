@@ -67,6 +67,7 @@ interface IChangesListProps {
   readonly dispatcher: Dispatcher
   readonly availableWidth: number
   readonly isCommitting: boolean
+  readonly isIndexLocked: boolean
 
   /**
    * Click event handler passed directly to the onRowClick prop of List, see
@@ -448,6 +449,9 @@ export class ChangesList extends React.Component<
           commitMessage={this.props.commitMessage}
           autocompletionProviders={this.props.autocompletionProviders}
           isCommitting={this.props.isCommitting}
+<<<<<<< HEAD
+          isIndexLocked={this.props.isIndexLocked}
+=======
           showCoAuthoredBy={this.props.showCoAuthoredBy}
           coAuthors={this.props.coAuthors}
           placeholder={this.getPlaceholderMessage(
@@ -456,6 +460,7 @@ export class ChangesList extends React.Component<
           )}
           singleFileCommit={singleFileCommit}
           key={this.props.repository.id}
+>>>>>>> __release-test-b28c4b8-104408793
         />
       </div>
     )

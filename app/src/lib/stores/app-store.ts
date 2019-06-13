@@ -160,6 +160,7 @@ import {
   appendIgnoreRule,
   IStatusResult,
   createMergeCommit,
+  getBranchesPointedAt,
 } from '../git'
 import {
   installGlobalLFSFilters,
@@ -202,6 +203,7 @@ import { readEmoji } from '../read-emoji'
 import { GitStoreCache } from './git-store-cache'
 import { MergeConflictsErrorContext } from '../git-error-context'
 import { setNumber, setBoolean, getBoolean, getNumber } from '../local-storage'
+import { MergeConflictsDialog } from '../../ui/merge-conflicts'
 
 /**
  * As fast-forwarding local branches is proportional to the number of local
@@ -1781,6 +1783,41 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
       return { workingDirectory, selectedFileIDs, diff }
     })
+
+    const inConflictedMerge = status.workingDirectory.files.some(f => {
+      return (
+        f.status === AppFileStatus.Conflicted ||
+        f.status === AppFileStatus.Resolved
+      )
+    })
+
+    // if any files are conflicted or resolved,
+    // we trigger the conflict resolution flow
+    // (if we're not already in it)
+    if (
+      status.currentBranch !== undefined &&
+      inConflictedMerge &&
+      (this.currentPopup === null ||
+        (this.currentPopup !== null &&
+          this.currentPopup.type !== PopupType.MergeConflicts &&
+          this.currentPopup.type !== PopupType.AbortMerge))
+    ) {
+      const possibleTheirsBranches = await getBranchesPointedAt(
+        repository,
+        'MERGE_HEAD'
+      )
+      const theirBranch =
+        possibleTheirsBranches.length === 1
+          ? possibleTheirsBranches[0]
+          : undefined
+      const currentBranch = status.currentBranch
+      this._showPopup({
+        type: PopupType.MergeConflicts,
+        repository,
+        currentBranch,
+        theirBranch,
+      })
+    }
     this.emitUpdate()
 
     this.updateChangesDiffForCurrentSelection(repository)

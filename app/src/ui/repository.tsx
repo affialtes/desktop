@@ -136,6 +136,7 @@ export class RepositoryView extends React.Component<
         availableWidth={availableWidth}
         gitHubUserStore={this.props.gitHubUserStore}
         isCommitting={this.props.state.isCommitting}
+        isIndexLocked={this.props.state.isIndexLocked}
         isPushPullFetchInProgress={this.props.state.isPushPullFetchInProgress}
         askForConfirmationOnDiscardChanges={
           this.props.askForConfirmationOnDiscardChanges

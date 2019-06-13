@@ -47,6 +47,7 @@ interface IChangesSidebarProps {
   readonly isCommitting: boolean
   readonly isPushPullFetchInProgress: boolean
   readonly gitHubUserStore: GitHubUserStore
+  readonly isIndexLocked: boolean
   readonly askForConfirmationOnDiscardChanges: boolean
   readonly accounts: ReadonlyArray<Account>
   /** The name of the currently selected external editor */
@@ -313,10 +314,14 @@ export class ChangesSidebar extends React.Component<IChangesSidebarProps, {}> {
           availableWidth={this.props.availableWidth}
           onIgnore={this.onIgnore}
           isCommitting={this.props.isCommitting}
+<<<<<<< HEAD
+          isIndexLocked={this.props.isIndexLocked}
+=======
           showCoAuthoredBy={this.props.changes.showCoAuthoredBy}
           coAuthors={this.props.changes.coAuthors}
           externalEditorLabel={this.props.externalEditorLabel}
           onOpenInExternalEditor={this.props.onOpenInExternalEditor}
+>>>>>>> __release-test-b28c4b8-104408793
         />
         {this.renderMostRecentLocalCommit()}
       </div>

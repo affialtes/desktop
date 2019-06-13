@@ -48,6 +48,9 @@ interface ICommitMessageProps {
   readonly dispatcher: Dispatcher
   readonly autocompletionProviders: ReadonlyArray<IAutocompletionProvider<any>>
   readonly isCommitting: boolean
+<<<<<<< HEAD
+  readonly isIndexLocked: boolean
+=======
   readonly placeholder: string
   readonly singleFileCommit: boolean
 
@@ -65,6 +68,7 @@ interface ICommitMessageProps {
    * the user has chosen to do so.
    */
   readonly coAuthors: ReadonlyArray<IAuthor>
+>>>>>>> __release-test-b28c4b8-104408793
 }
 
 interface ICommitMessageState {
@@ -405,10 +409,15 @@ export class CommitMessage extends React.Component<
 
   public render() {
     const branchName = this.props.branch ? this.props.branch : 'master'
+<<<<<<< HEAD
+    const buttonEnabled =
+      this.canCommit() && !this.props.isCommitting && !this.props.isIndexLocked
+=======
 
     const isSummaryWhiteSpace = this.state.summary.match(/^\s+$/g)
     const buttonEnabled =
       this.canCommit() && !this.props.isCommitting && !isSummaryWhiteSpace
+>>>>>>> __release-test-b28c4b8-104408793
 
     const loading = this.props.isCommitting ? <Loading /> : undefined
     const className = classNames({
